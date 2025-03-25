@@ -6,41 +6,45 @@
 
 using namespace NAMESPACE;
 
-#define RESOLVE_VALUE(value, parent_dimension) (value.resolveValue(parent_dimension))
+
 
 // Macro for computing total dimension including margin, padding, and border
-#define COMPUTE_TOTAL_DIMENSION(layout, style, parent_height) \
-(layout.computedHeight + \
-RESOLVE_VALUE(style.margin().top, parent_height) + \
-RESOLVE_VALUE(style.margin().bottom, parent_height) + \
-RESOLVE_VALUE(style.padding().top, parent_height) + \
-RESOLVE_VALUE(style.padding().bottom, parent_height) + \
-RESOLVE_VALUE(style.border().widthTop, parent_height) + \
-RESOLVE_VALUE(style.border().widthBottom, parent_height))
+#define COMPUTE_TOTAL_DIMENSION(node, parent_height) \
+(node##Layout.computedHeight + \
+RESOLVE_VALUE(node##Style.margin().top, parent_height) + \
+RESOLVE_VALUE(node##Style.margin().bottom, parent_height) + \
+RESOLVE_VALUE(node##Style.padding().top, parent_height) + \
+RESOLVE_VALUE(node##Style.padding().bottom, parent_height) + \
+RESOLVE_VALUE(node##Style.border().widthTop, parent_height) + \
+RESOLVE_VALUE(node##Style.border().widthBottom, parent_height))
+
+
 
 inline bool should_position_node(Node* node) {
     auto position = node->style().dimensions().position;
     return position == PositionType::Static || position == PositionType::Relative;
 }
+
 void compute_child_position(Node *child) {
     float computedX = 0.0f;
     float computedY = 0.0f;
 
     Node *container = child->parent();
-    const auto &containerStyle = child->style();
-    auto &childLayout = child->layout();
-    auto &childStyle = child->style();
+    DEF_NODE_LAYOUT(container);
+    DEF_NODE_STYLE(container);
+    DEF_NODE_LAYOUT(child);
+    DEF_NODE_STYLE(child);
 
     auto &childPadding = childStyle.padding();
     float availableWidth = childLayout.computedWidth - childPadding.left.value - childPadding.right.value;
-    float availableParentWidth = container->layout().computedWidth;
-    float availableParentHeight = container->layout().computedHeight;
+    float availableParentWidth = containerLayout.computedWidth;
+    float availableParentHeight = containerLayout.computedHeight;
 
     if (childStyle.dimensions().display == OuterDisplay::Block) {
         SharedNode prev = child->prevSibling;
         if (prev) {
-            auto &prevLayout = prev->layout();
-            auto &prevStyle = prev->style();
+            DEF_NODE_LAYOUT(prev);
+            DEF_NODE_STYLE(prev);
             if (prevStyle.dimensions().display == OuterDisplay::Block) {
                 auto &margin = prevStyle.margin();
                 computedY = prevLayout.computedY + prevLayout.computedHeight +
@@ -53,8 +57,8 @@ void compute_child_position(Node *child) {
                 std::vector<SharedNode> currentLine;
 
                 for (auto &sibling: container->children) {
-                    auto &siblingLayout = sibling->layout();
-                    auto &siblingStyle = sibling->style();
+                    DEF_NODE_LAYOUT(sibling);
+                    DEF_NODE_STYLE(sibling);
                     auto siblingPosition = siblingStyle.dimensions().position;
                     if (siblingPosition != PositionType::Static && siblingPosition != PositionType::Relative) {
                         continue;
@@ -75,19 +79,10 @@ void compute_child_position(Node *child) {
 
                         currentLine.push_back(sibling);
                         currentX += siblingWidth;
-                        auto &margin = siblingStyle.margin();
-                        auto &padding = siblingStyle.padding();
-                        auto &border = siblingStyle.border();
-                        lineHeight = std::max(lineHeight, siblingLayout.computedHeight
-                                                          + margin.top.resolveValue(availableParentHeight)
-                                                          + margin.bottom.resolveValue(availableParentHeight)
-                                                          + padding.top.resolveValue(availableParentHeight)
-                                                          + padding.bottom.resolveValue(availableParentHeight)
-                                                          + border.widthTop.resolveValue(availableParentHeight)
-                                                          + border.widthBottom.resolveValue(availableParentHeight));
+                        lineHeight = std::max(lineHeight, COMPUTE_TOTAL_DIMENSION(sibling, availableParentHeight));
                     }
                 }
-                computedY = currentY + (currentLine.empty() ? 0.0f : lineHeight) + child->style().margin().top.value;
+                computedY = currentY + (currentLine.empty() ? 0.0f : lineHeight) + childStyle.margin().top.value;
             }
         }
         computedX = containerStyle.padding().left.resolveValue(0) + containerStyle.border().widthLeft.resolveValue(0);
@@ -99,8 +94,8 @@ void compute_child_position(Node *child) {
 
         for (auto &sibling: container->children) {
             if (sibling.get() == child) break;
-            auto &siblingLayout = sibling->layout();
-            auto &siblingStyle = sibling->style();
+            DEF_NODE_LAYOUT(sibling);
+            DEF_NODE_STYLE(sibling);
             auto siblingPosition = siblingStyle.dimensions().position;
             if (siblingPosition != PositionType::Static && siblingPosition != PositionType::Relative) {
                 continue;
@@ -118,10 +113,7 @@ void compute_child_position(Node *child) {
                 }
                 currentLine.push_back(sibling);
                 currentX += siblingWidth;
-                lineHeight = std::max(lineHeight, siblingLayout.computedHeight + siblingMargin.top.value +
-                                                  siblingMargin.bottom.value + siblingPadding.top.value +
-                                                  siblingPadding.bottom.value + siblingBorder.widthTop.value +
-                                                  siblingBorder.widthBottom.value);
+                lineHeight = std::max(lineHeight, COMPUTE_TOTAL_DIMENSION(sibling, availableParentHeight));
             } else if (siblingStyle.dimensions().display == OuterDisplay::Block) {
                 if (!currentLine.empty()) {
                     currentY += lineHeight;
@@ -147,7 +139,6 @@ void compute_child_position(Node *child) {
     childLayout.computedX = computedX;
     childLayout.computedY = computedY;
 }
-
 bool NormalFlowStrategy::preLayout(float availableWidth, float availableHeight) {
     auto &layout = container->layout();
     float oldX = layout.computedX;

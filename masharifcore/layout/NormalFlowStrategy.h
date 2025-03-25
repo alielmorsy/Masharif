@@ -20,6 +20,8 @@ NAMESPACE {
 
         void layout(float availableWidth, float availableHeight) override;
     };
+
+    void compute_child_position(Node *child);
 } // NAMESPACE
 
 #endif //NORMALFLOWSTRATEGY_H
