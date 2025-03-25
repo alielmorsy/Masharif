@@ -1,24 +1,27 @@
 #ifndef NORMALFLOWSTRATEGY_H
 #define NORMALFLOWSTRATEGY_H
 
+
+
 #include "LayoutStrategy.h"
+
 #include "masharifcore/macros.h"
+#include <vector>
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     class NormalFlowStrategy : public LayoutStrategy {
     public:
         explicit NormalFlowStrategy(Node *node)
             : LayoutStrategy(node) {
         }
 
-        ~NormalFlowStrategy() override;
+        ~NormalFlowStrategy() = default;
 
-        bool preLayout(float availableWidth, float availableHeight) override;
-
-        bool postLayout() override;
 
         void layout(float availableWidth, float availableHeight) override;
+
+        void layoutLine(std::vector<Node *> &lines, float y);
     };
 
     void compute_child_position(Node *child);

@@ -11,7 +11,7 @@
 
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     struct Gap {
         CSSValue row;
         CSSValue column;

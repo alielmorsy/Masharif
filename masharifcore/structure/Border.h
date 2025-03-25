@@ -18,12 +18,12 @@ ENUM_TO_STRING(BorderStyle,
 )
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     struct BorderProperties {
         CSSValue widthTop{0};
         CSSValue widthBottom{0};
         CSSValue widthLeft{0};
-        CSSValue widthHeight{0};
+        CSSValue widthRight{0};
         Color color{0, 0, 0};
 
 

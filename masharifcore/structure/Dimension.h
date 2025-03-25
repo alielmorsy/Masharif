@@ -8,16 +8,16 @@
 #include <masharifcore/macros.h>
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     struct Dimensions {
         OuterDisplay display = OuterDisplay::Block;
         CSSValue width;
         CSSValue height;
-        CSSValue minWidth;
-        CSSValue minHeight;
-        CSSValue maxWidth;
-        CSSValue maxHeight;
-        CSSValue top, right, bottom, left;
+        CSSValue minWidth{0};
+        CSSValue minHeight{0};
+        CSSValue maxWidth{0};
+        CSSValue maxHeight{0};
+        CSSValue top{0}, right{0}, bottom{0}, left{0};
         PositionType position = PositionType::Static;
     };
 }

@@ -1,9 +1,9 @@
-#ifndef H_masharif_mACRo
-#define H_masharif_mACRo
+#ifndef H_masharif_MACRO
+#define H_masharif_MACRO
 #include <array>
 #include <string_view>
 
-#define NAMESPACE masharif
+#define _NAMESPACE masharif
 // Platform-specific visibility settings
 #ifdef _WIN32
 #define EXPORT_ENUM __declspec(dllexport)

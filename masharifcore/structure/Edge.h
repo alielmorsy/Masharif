@@ -4,7 +4,7 @@
 #include "../macros.h"
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     struct Edge {
         CSSValue left{0, CSSUnit::PX};
         CSSValue top{0, CSSUnit::PX};

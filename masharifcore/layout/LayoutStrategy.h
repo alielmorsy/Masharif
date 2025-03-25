@@ -3,10 +3,11 @@
 
 #include <masharifcore/macros.h>
 
-#include "Node.h"
+
 
 namespace
-NAMESPACE {
+_NAMESPACE {
+    class Node;
     struct LayoutStrategy {
     protected:
         Node *container;
@@ -17,9 +18,6 @@ NAMESPACE {
 
         virtual ~LayoutStrategy() = default;
 
-        virtual bool preLayout(float availableWidth, float availableHeight) = 0;
-
-        virtual bool postLayout() = 0;
 
         virtual void layout(float availableWidth, float availableHeight) = 0;
     };

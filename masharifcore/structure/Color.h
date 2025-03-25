@@ -6,10 +6,10 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include "../macros.h"
+#include <masharifcore/macros.h>
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     class Color {
     public:
         uint8_t r, g, b, a;
@@ -114,8 +114,6 @@ NAMESPACE {
         [[nodiscard]] Color withAlpha(uint8_t alpha) const {
             return {r, g, b, alpha};
         }
-
-
     };
 }
 #endif //COLOR_H

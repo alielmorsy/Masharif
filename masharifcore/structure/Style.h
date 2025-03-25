@@ -11,11 +11,14 @@
 #include "Flex.h"
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     struct MarginEdge : Edge {
     };
 
     struct PaddingEdge : Edge {
+    };
+
+    struct PositionOffsets : Edge {
     };
 
     template<typename T>
@@ -23,24 +26,19 @@ NAMESPACE {
                                  std::is_same_v<T, CSSFlex> ||
                                  std::is_same_v<T, MarginEdge> ||
                                  std::is_same_v<T, PaddingEdge> ||
+                                 std::is_same_v<T, Edge> ||
                                  std::is_same_v<T, BorderProperties>;
 
     class Style {
     public:
-        bool dirtyPre = true;
-        bool dirtyPost = true;
+        bool dirty = true;
 
         template<ModifiableProperty T>
         T &modify() {
-            dirtyPre = true;
-            dirtyPost = true;
+            dirty = true;
             return getProperty<T>();
         }
 
-        void clearDirty() {
-            dirtyPre = false;
-            dirtyPost = false;
-        }
 
 
         [[nodiscard]] const CSSFlex &flex() const { return m_flexProps; }
@@ -48,6 +46,7 @@ NAMESPACE {
         [[nodiscard]] const PaddingEdge &padding() const { return m_paddingProps; }
         [[nodiscard]] const BorderProperties &border() const { return m_borderProps; }
         [[nodiscard]] const Dimensions &dimensions() const { return m_dimensions; }
+        [[nodiscard]] const PositionOffsets &offsets() const { return m_offsets; }
 
     private:
         template<ModifiableProperty T>
@@ -62,6 +61,8 @@ NAMESPACE {
                 return m_borderProps;
             } else if constexpr (std::is_same_v<T, Dimensions>) {
                 return m_dimensions;
+            } else if constexpr (std::is_same_v<T, PositionOffsets>) {
+                return m_offsets;
             }
         }
 
@@ -69,6 +70,7 @@ NAMESPACE {
         CSSFlex m_flexProps;
         MarginEdge m_marginProps;
         PaddingEdge m_paddingProps;
+        PositionOffsets m_offsets;
         BorderProperties m_borderProps;
         Dimensions m_dimensions;
     };

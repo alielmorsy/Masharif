@@ -1,12 +1,8 @@
-//
-// Created by Ali Elmorsy on 3/24/2025.
-//
-
 #ifndef CSSVALUE_H
 #define CSSVALUE_H
 #include <cmath>
 
-namespace masharif {
+namespace _NAMESPACE {
     enum class CSSUnit {
         PX = 0,
         PERCENT,
@@ -17,7 +13,7 @@ namespace masharif {
         float value = 0.0f;
         CSSUnit unit = CSSUnit::AUTO;
 
-        explicit CSSValue(const float val = NAN, CSSUnit u = CSSUnit::AUTO) : value(val), unit(u) {
+        CSSValue(const float val = NAN, CSSUnit u = CSSUnit::AUTO) : value(val), unit(u) {
         }
 
         [[nodiscard]] float resolveValue(float reference) const {

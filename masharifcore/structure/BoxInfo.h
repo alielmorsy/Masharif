@@ -2,8 +2,8 @@
 #include "../macros.h"
 
 namespace
-NAMESPACE {
-    ENUM_BEGIN(OuterDisplay) { None, Block, Inline, InlineBlock } ENUM_END(OuterDisplay);
+_NAMESPACE {
+    ENUM_BEGIN(OuterDisplay) { None, Block, Inline, InlineBlock, Flex, InlineFlex } ENUM_END(OuterDisplay);
 
     ENUM_BEGIN(InnerLayout) { NormalFlow, Flex, Grid } ENUM_END(InnerLayout);
 
@@ -14,6 +14,8 @@ NAMESPACE {
                    ENUM_CASE(OuterDisplay::Block)
                    ENUM_CASE(OuterDisplay::Inline)
                    ENUM_CASE(OuterDisplay::InlineBlock)
+                   ENUM_CASE(OuterDisplay::Flex)
+                   ENUM_CASE(OuterDisplay::InlineFlex)
     );
     ENUM_TO_STRING(PositionType,
                    ENUM_CASE(PositionType::Static)

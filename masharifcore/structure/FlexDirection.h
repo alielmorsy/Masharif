@@ -2,7 +2,7 @@
 #include "../macros.h"
 
 namespace
-NAMESPACE {
+_NAMESPACE {
     ENUM_BEGIN(FlexDirection) {
         Column = 0,
         ColumnReverse = 1,

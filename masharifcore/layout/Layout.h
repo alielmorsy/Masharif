@@ -1,16 +1,15 @@
 #ifndef LAYOUT_H
 #define LAYOUT_H
 #include <memory>
-#include <vector>
 #include <masharifcore/macros.h>
 
 namespace
-NAMESPACE {
+_NAMESPACE {
 
 
     struct Layout {
-        float computedX = NAN;
-        float computedY = NAN;
+        float computedX = 0;
+        float computedY = 0;
         float computedWidth, computedHeight;
         float computedFlexBasis;
 
