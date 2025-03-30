@@ -98,7 +98,30 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
             _layout.computedX += offset.left.resolveValue(availableWidth) - offset.right.resolveValue(availableWidth);
             _layout.computedY += offset.top.resolveValue(availableHeight) - offset.bottom.resolveValue(availableHeight);
         }
+        auto &containerStyle = _style;
+        if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
+            float maxChildBottom = 0.0f;
+            for (const auto &child: children) {
+                DEF_NODE_LAYOUT(child);
+                DEF_NODE_STYLE(child);
+                auto position = childStyle.dimensions().position;
+                auto &childMargin = childStyle.margin();
+                if (position == PositionType::Static || position == PositionType::Relative) {
+                    maxChildBottom = std::max(maxChildBottom,
+                                              childLayout.computedY + childLayout.computedHeight + childMargin.bottom.
+                                              value
+                                              +
+                                              childMargin.top.value);
+                }
+            }
+
+            auto &border = containerStyle.border();
+            _layout.computedHeight = maxChildBottom + _style.padding().top.value + _style.padding().bottom.value
+                                     +
+                                     border.widthTop.value + border.widthBottom.value;
+        }
     }
+
     _style.dirty = false;
 }
 

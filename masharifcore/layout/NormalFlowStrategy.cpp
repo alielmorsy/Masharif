@@ -72,25 +72,7 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
         layoutLine(currentLine, currentY);
     }
 
-    if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
-        float maxChildBottom = 0.0f;
-        for (const auto &child: container->children) {
-            DEF_NODE_LAYOUT(child);
-            DEF_NODE_STYLE(child);
-            auto position = childStyle.dimensions().position;
-            auto &childMargin = childStyle.margin();
-            if (position == PositionType::Static || position == PositionType::Relative) {
-                maxChildBottom = std::max(maxChildBottom,
-                                          childLayout.computedY + childLayout.computedHeight + childMargin.bottom.value
-                                          +
-                                          childMargin.top.value);
-            }
-        }
 
-        auto &border = containerStyle.border();
-        containerLayout.computedHeight = maxChildBottom + containerPadding.top.value + containerPadding.bottom.value +
-                                         border.widthTop.value + border.widthBottom.value;
-    }
 }
 
 void NormalFlowStrategy::layoutLine(std::vector<Node*> &line, float y) {
