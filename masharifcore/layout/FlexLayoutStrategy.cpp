@@ -294,12 +294,12 @@ FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<std::shared_ptr<Node>
     }
 
     return {
-        .flexItems = std::move(items),
-        .numberOfAutoMargin = numberOfAutoMargin,
-        .takenSize = takenSize,
-        .totalFlexGrow = totalFlexGrow,
-        .totalFlexShrinkScaledFactors = totalFlexShrinkScaledFactors,
-        .crossSize = totalCrossSize
+        std::move(items), // flexItems (std::vector<Node *>)
+        numberOfAutoMargin,
+        takenSize,
+        totalFlexGrow,
+        totalFlexShrinkScaledFactors,
+        totalCrossSize
     };
 }
 
@@ -464,7 +464,7 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
 
     float totalLineCrossSize = 0;
     bool isReverse = containerStyle.flex().wrap == FlexWrap::WrapReverse;
-    for (const auto &line : lines) {
+    for (const auto &line: lines) {
         totalLineCrossSize += line.crossSize;
     }
 
@@ -499,7 +499,7 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
         case AlignContent::Stretch:
             if (!lines.empty() && extraSpace > 0) {
                 float additionalSize = extraSpace / lines.size();
-                for (auto &line : lines) {
+                for (auto &line: lines) {
                     line.crossSize += additionalSize;
                 }
             }
@@ -508,11 +508,11 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
             break;
     }
 
-    for (auto &line : lines) {
+    for (auto &line: lines) {
         // Calculate the line's cross start position considering wrap reverse
         float lineCrossStart = isReverse ? (containerCrossSize - crossOffset - line.crossSize) : crossOffset;
 
-        for (auto child : line.flexItems) {
+        for (auto child: line.flexItems) {
             DEF_NODE_STYLE(child);
             auto &dimension = childStyle.dimensions();
             if (dimension.display == OuterDisplay::None) continue;
@@ -585,7 +585,8 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
                     itemCrossPos = lineCrossStart + line.crossSize - childCrossSize - marginEnd;
                     break;
                 case AlignItems::FlexCenter:
-                    itemCrossPos = lineCrossStart + (line.crossSize - childCrossSize) / 2 + (marginStart - marginEnd) / 2;
+                    itemCrossPos = lineCrossStart + (line.crossSize - childCrossSize) / 2 + (marginStart - marginEnd) /
+                                   2;
                     break;
                 case AlignItems::Stretch:
                     itemCrossPos = lineCrossStart + marginStart;

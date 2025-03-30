@@ -102,9 +102,13 @@ _NAMESPACE {
         }
 
         // Equality operators
-        bool operator==(const Color &other) const = default;
+        bool operator==(const Color &other) const {
+            return other.r == r && other.g == g && other.b == b && other.a == a;
+        };
 
-        bool operator!=(const Color &other) const = default;
+        bool operator!=(const Color &other) const {
+            return !operator==(other);
+        };
 
         // Utility methods
         [[nodiscard]] uint32_t toRGBA() const {
