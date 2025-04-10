@@ -2,7 +2,8 @@
 #define CSSVALUE_H
 #include <cmath>
 
-namespace _NAMESPACE {
+namespace
+_NAMESPACE {
     enum class CSSUnit {
         PX = 0,
         PERCENT,
@@ -26,6 +27,10 @@ namespace _NAMESPACE {
 
         [[nodiscard]] bool isUndefined() const {
             return std::isnan(value);
+        }
+
+        inline bool operator==( const CSSValue &rhs) const {
+            return value == rhs.value && unit == rhs.unit;
         }
     };
 }

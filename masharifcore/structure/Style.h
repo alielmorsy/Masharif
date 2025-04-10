@@ -1,14 +1,11 @@
 #ifndef STYLE_H
 #define STYLE_H
-#include <bitset>
-#include <functional>
-#include <optional>
 
 #include "Border.h"
-#include "BoxInfo.h"
 #include "Dimension.h"
 #include "Edge.h"
 #include "Flex.h"
+#include <type_traits>
 
 namespace
 _NAMESPACE {
@@ -21,7 +18,7 @@ _NAMESPACE {
     struct PositionOffsets : Edge {
     };
 
-#include <type_traits>
+
 
 class Style {
 public:
