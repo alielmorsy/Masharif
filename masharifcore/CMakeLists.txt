@@ -40,4 +40,4 @@ if (CMAKE_BUILD_TYPE STREQUAL "Release")
 endif ()
 
 
-target_include_directories(masharifcore PRIVATE ${MASHARIF_ROOT})
+target_include_directories(masharifcore PUBLIC ${MASHARIF_ROOT})

@@ -27,6 +27,7 @@ _NAMESPACE {
         float flexShrink = 1.0f;
         FlexDirection direction = FlexDirection::Row;
         FlexWrap wrap = FlexWrap::NoWrap;
+        int order = 0;
         Gap gap;
 
         [[nodiscard]] bool isRow() const {

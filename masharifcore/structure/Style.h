@@ -27,13 +27,13 @@ class Style {
 public:
     bool dirty = true;
 
-    template<typename T, typename std::enable_if<
-        std::is_same<T, Dimensions>::value ||
-        std::is_same<T, CSSFlex>::value ||
-        std::is_same<T, MarginEdge>::value ||
-        std::is_same<T, PaddingEdge>::value ||
-        std::is_same<T, Edge>::value ||
-        std::is_same<T, BorderProperties>::value, int>::type = 0>
+    template<typename T, std::enable_if_t<
+        std::is_same_v<T, Dimensions> ||
+        std::is_same_v<T, CSSFlex> ||
+        std::is_same_v<T, MarginEdge> ||
+        std::is_same_v<T, PaddingEdge> ||
+        std::is_same_v<T, Edge> ||
+        std::is_same_v<T, BorderProperties>, int> = 0>
     T& modify() {
         dirty = true;
         return getProperty<T>();

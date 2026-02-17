@@ -13,7 +13,10 @@ namespace _NAMESPACE {
         float value = 0.0f;
         CSSUnit unit = CSSUnit::AUTO;
 
-        CSSValue(const float val = NAN, CSSUnit u = CSSUnit::AUTO) : value(val), unit(u) {
+        CSSValue(const float val = NAN) : value(val), unit(std::isnan(val) ? CSSUnit::AUTO : CSSUnit::PX) {
+        }
+
+        CSSValue(const float val, CSSUnit u) : value(val), unit(u) {
         }
 
         [[nodiscard]] float resolveValue(float reference) const {

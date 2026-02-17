@@ -10,8 +10,9 @@ _NAMESPACE {
     struct Layout {
         float computedX = 0;
         float computedY = 0;
-        float computedWidth, computedHeight;
-        float computedFlexBasis;
+        float computedWidth = 0.0f;
+        float computedHeight = 0.0f;
+        float computedFlexBasis = 0.0f;
 
     };
 }

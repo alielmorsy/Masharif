@@ -99,7 +99,11 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
             _layout.computedY += offset.top.resolveValue(availableHeight) - offset.bottom.resolveValue(availableHeight);
         }
         auto &containerStyle = _style;
-        if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
+        // Only override height for Block/InlineBlock. Flex layout handles its own height.
+        auto display = containerStyle.dimensions().display;
+        bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
+
+        if (isBlock && containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
             float maxChildBottom = 0.0f;
             for (const auto &child: children) {
                 DEF_NODE_LAYOUT(child);
@@ -149,7 +153,11 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
                                     margin.right.resolveValue(availableWidth) +
                                     padding.left.value + padding.right.value +
                                     border.widthLeft.value + border.widthRight.value;
-            computedWidth = std::max(0.0f, availableWidth - totalHorizontal);
+            if (std::isnan(availableWidth)) {
+                computedWidth = 0.0f;
+            } else {
+                computedWidth = std::max(0.0f, availableWidth - totalHorizontal);
+            }
         } else if (display == OuterDisplay::Inline || display == OuterDisplay::InlineBlock) {
             computedWidth = 100.0f; // Placeholder
             for (const auto &child: children) {
@@ -157,14 +165,24 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
                 DEF_NODE_LAYOUT(child);
                 DEF_NODE_STYLE(child);
                 computedWidth = std::max(computedWidth, childLayout.computedWidth +
-                                                        childStyle.margin().left.resolveValue(0) + childStyle.margin().
-                                                        right.resolveValue(0));
+                                                        childStyle.margin().left.resolveValue(0) + childStyle.margin(). right.resolveValue(0));
             }
         }
     }
-    if (!std::isnan(computedWidth) && minWidth.value != 0 && maxWidth.value != 0)
-        computedWidth = std::max(minWidth.resolveValue(availableWidth),
-                                 std::min(computedWidth, maxWidth.resolveValue(availableWidth)));
+    auto &stylePadding = _style.padding();
+    auto &styleBorder = _style.border();
+    float horizontalPadding = stylePadding.left.value + stylePadding.right.value +
+                              styleBorder.widthLeft.value + styleBorder.widthRight.value;
+    float verticalPadding = stylePadding.top.value + stylePadding.bottom.value +
+                            styleBorder.widthTop.value + styleBorder.widthBottom.value;
+
+    if (!std::isnan(computedWidth)) {
+        if (minWidth.unit != CSSUnit::AUTO)
+            computedWidth = std::max(computedWidth, minWidth.resolveValue(availableWidth));
+        if (maxWidth.unit != CSSUnit::AUTO)
+            computedWidth = std::min(computedWidth, maxWidth.resolveValue(availableWidth));
+        computedWidth += horizontalPadding;
+    }
 
 
     if (height.unit == CSSUnit::PX) {
@@ -177,9 +195,13 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
             }
         }
     }
-    if (!std::isnan(computedHeight) && minHeight.value != 0 && maxHeight.value != 0)
-        computedHeight = std::max(minHeight.resolveValue(availableHeight),
-                                  std::min(computedHeight, maxHeight.resolveValue(availableHeight)));
+    if (!std::isnan(computedHeight)) {
+        if (minHeight.unit != CSSUnit::AUTO)
+            computedHeight = std::max(computedHeight, minHeight.resolveValue(availableHeight));
+        if (maxHeight.unit != CSSUnit::AUTO)
+            computedHeight = std::min(computedHeight, maxHeight.resolveValue(availableHeight));
+        computedHeight += verticalPadding;
+    }
 
     _layout.computedWidth = computedWidth;
     _layout.computedHeight = computedHeight;

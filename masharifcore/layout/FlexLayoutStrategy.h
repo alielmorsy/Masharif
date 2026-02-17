@@ -34,6 +34,9 @@ _NAMESPACE {
                                    std::vector<std::shared_ptr<Node> >::iterator &end, float totalMainAxisSize,
                                    size_t lineCount);
 
+        void resolveFlexibleLengths(FlexLine &line, float availableSpace, bool isRow, float availableWidth,
+                                    float availableHeight);
+
         void updateCrossSize(std::vector<FlexLine> &lines);
     };
 }
