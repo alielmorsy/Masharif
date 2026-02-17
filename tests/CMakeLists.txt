@@ -20,6 +20,7 @@ add_executable(unit_tests
     DimensionTests.cpp
     SpacingTests.cpp
     GapTests.cpp
+    BenchmarkTests.cpp
 )
 
 target_link_libraries(unit_tests

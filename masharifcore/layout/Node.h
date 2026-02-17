@@ -76,8 +76,11 @@ _NAMESPACE {
 
         void addChild(SharedNode &child) {
             children.push_back(child);
+            child->_parent = this;
             _style.dirty = true;
         }
+
+        void removeChild(SharedNode &child);
 
     private:
         Node *_parent = nullptr;

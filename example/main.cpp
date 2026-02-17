@@ -1,232 +1,168 @@
 #include <iostream>
-#include <ostream>
-#include <cmath>
+#include <vector>
+#include <chrono>
+#include <memory>
 #include <masharifcore/Masharif.h>
 
-#define WIDTH 1920
-#define HEIGHT 1080
 using namespace _NAMESPACE;
 
-void printNode(Node *node, int depth = 0) {
-    std::string indent(depth * 2, ' ');
-    std::cout << indent << "Node at (" << node->layout().computedX << ", " << node->layout().computedY
-            << "), Size: " << node->layout().computedWidth << "x" << node->layout().computedHeight
-            << ", FlexBasis: " << node->layout().computedFlexBasis
-            << "\n";
-    for (const auto &child: node->children) {
-        printNode(child.get(), depth + 1);
-    }
+// Helper to measure function execution time
+template<typename Func>
+long long measureTime(Func func, const std::string &name) {
+    auto start = std::chrono::high_resolution_clock::now();
+    func();
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    std::cout << "[BENCHMARK] " << name << ": " << duration << " us (" << (duration / 1000.0) << " ms)\n";
+    return duration;
 }
-
-bool approxEqual(float a, float b, float eps = 0.5f) {
-    return std::fabs(a - b) < eps;
-}
-
-#define CHECK(cond, msg)                                                   \
-    do {                                                                    \
-        if (!(cond)) {                                                       \
-            std::cout << "  FAIL: " << msg << "\n";                          \
-            passed = false;                                                  \
-        }                                                                    \
-    } while (0)
-
-// ── Test 1: Basic flex grow ─────────────────────────────────────────────────
-bool testBasicGrow() {
-    bool passed = true;
-    std::cout << "== Test 1: Basic Flex Grow ==\n";
-
-    auto root = std::make_shared<Node>();
-    root->setDisplay(OuterDisplay::Flex);
-    root->style().modify<Dimensions>().width = {400.0f, CSSUnit::PX};
-
-    auto a = std::make_shared<Node>();
-    a->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    a->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    a->style().modify<CSSFlex>().flexGrow = 1;
-    root->addChild(a);
-
-    auto b = std::make_shared<Node>();
-    b->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    b->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    b->style().modify<CSSFlex>().flexGrow = 1;
-    root->addChild(b);
-
-    root->calculate(WIDTH, HEIGHT);
-    printNode(root.get());
-
-    // Each item starts at 100px, 200px free space split equally → 200px each
-    CHECK(approxEqual(a->layout().computedFlexBasis, 200.0f), "A should grow to 200");
-    CHECK(approxEqual(b->layout().computedFlexBasis, 200.0f), "B should grow to 200");
-    CHECK(approxEqual(a->layout().computedX, 0.0f), "A.x should be 0");
-    CHECK(approxEqual(b->layout().computedX, 200.0f), "B.x should be 200");
-
-    std::cout << (passed ? "  PASSED\n" : "") << "\n";
-    return passed;
-}
-
-// ── Test 2: Grow with max-width clamping (multi-pass) ───────────────────────
-bool testGrowWithMaxWidth() {
-    bool passed = true;
-    std::cout << "== Test 2: Grow with Max-Width Clamping ==\n";
-
-    // Container: 400px, items A(100px, grow=1, maxWidth=150) B(100px, grow=1)
-    // Pass 1: 200px free → each gets +100 → A=200 CLAMPED to 150, B=200
-    // Pass 2: A frozen@150, remaining = 400-150-100 = 150 → B gets all → 250
-    auto root = std::make_shared<Node>();
-    root->setDisplay(OuterDisplay::Flex);
-    root->style().modify<Dimensions>().width = {400.0f, CSSUnit::PX};
-
-    auto a = std::make_shared<Node>();
-    a->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    a->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    a->style().modify<Dimensions>().maxWidth = {150.0f, CSSUnit::PX};
-    a->style().modify<CSSFlex>().flexGrow = 1;
-    root->addChild(a);
-
-    auto b = std::make_shared<Node>();
-    b->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    b->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    b->style().modify<CSSFlex>().flexGrow = 1;
-    root->addChild(b);
-
-    root->calculate(WIDTH, HEIGHT);
-    printNode(root.get());
-
-    CHECK(approxEqual(a->layout().computedFlexBasis, 150.0f), "A clamped to maxWidth 150");
-    CHECK(approxEqual(b->layout().computedFlexBasis, 250.0f), "B gets remaining → 250");
-
-    std::cout << (passed ? "  PASSED\n" : "") << "\n";
-    return passed;
-}
-
-// ── Test 3: Shrink with min-width clamping (multi-pass) ─────────────────────
-bool testShrinkWithMinWidth() {
-    bool passed = true;
-    std::cout << "== Test 3: Shrink with Min-Width Clamping ==\n";
-
-    // Container: 400px, items A(300px, shrink=1, minWidth=250) B(300px, shrink=1)
-    // Total=600, overflow=200 → each should shrink by 100 → A=200 CLAMPED to 250
-    // Pass 2: A frozen@250, free=400-250=150, B basis=300, needs to fit → B=150
-    auto root = std::make_shared<Node>();
-    root->setDisplay(OuterDisplay::Flex);
-    root->style().modify<Dimensions>().width = {400.0f, CSSUnit::PX};
-
-    auto a = std::make_shared<Node>();
-    a->style().modify<Dimensions>().width = {300.0f, CSSUnit::PX};
-    a->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    a->style().modify<Dimensions>().minWidth = {250.0f, CSSUnit::PX};
-    a->style().modify<CSSFlex>().flexShrink = 1;
-    root->addChild(a);
-
-    auto b = std::make_shared<Node>();
-    b->style().modify<Dimensions>().width = {300.0f, CSSUnit::PX};
-    b->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    b->style().modify<CSSFlex>().flexShrink = 1;
-    root->addChild(b);
-
-    root->calculate(WIDTH, HEIGHT);
-    printNode(root.get());
-
-    CHECK(approxEqual(a->layout().computedFlexBasis, 250.0f), "A clamped to minWidth 250");
-    CHECK(approxEqual(b->layout().computedFlexBasis, 150.0f), "B absorbs remaining → 150");
-
-    std::cout << (passed ? "  PASSED\n" : "") << "\n";
-    return passed;
-}
-
-// ── Test 4: Order property ──────────────────────────────────────────────────
-bool testOrderProperty() {
-    bool passed = true;
-    std::cout << "== Test 4: Order Property ==\n";
-
-    // Three items added in DOM order: A, B, C
-    // order: A=2, B=0, C=1 → visual order should be B, C, A
-    auto root = std::make_shared<Node>();
-    root->setDisplay(OuterDisplay::Flex);
-    root->style().modify<Dimensions>().width = {300.0f, CSSUnit::PX};
-
-    auto a = std::make_shared<Node>();
-    a->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    a->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    a->style().modify<CSSFlex>().order = 2;
-    root->addChild(a);
-
-    auto b = std::make_shared<Node>();
-    b->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    b->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    b->style().modify<CSSFlex>().order = 0;
-    root->addChild(b);
-
-    auto c = std::make_shared<Node>();
-    c->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    c->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    c->style().modify<CSSFlex>().order = 1;
-    root->addChild(c);
-
-    root->calculate(WIDTH, HEIGHT);
-    printNode(root.get());
-
-    // Visual order: B at x=0, C at x=100, A at x=200
-    CHECK(approxEqual(b->layout().computedX, 0.0f),   "B (order=0) at x=0");
-    CHECK(approxEqual(c->layout().computedX, 100.0f),  "C (order=1) at x=100");
-    CHECK(approxEqual(a->layout().computedX, 200.0f),  "A (order=2) at x=200");
-
-    std::cout << (passed ? "  PASSED\n" : "") << "\n";
-    return passed;
-}
-
-// ── Test 5: Padding not double-counted ──────────────────────────────────────
-bool testPaddingNotDoubled() {
-    bool passed = true;
-    std::cout << "== Test 5: Padding Not Double-Counted ==\n";
-
-    // Container: 400px wide, 20px padding each side → 360px inner space
-    // One child with flexGrow=1 should fill 360px, positioned at x=20
-    auto root = std::make_shared<Node>();
-    root->setDisplay(OuterDisplay::Flex);
-    root->style().modify<Dimensions>().width = {400.0f, CSSUnit::PX};
-    root->style().modify<PaddingEdge>().left = {20.0f, CSSUnit::PX};
-    root->style().modify<PaddingEdge>().right = {20.0f, CSSUnit::PX};
-
-    auto child = std::make_shared<Node>();
-    child->style().modify<Dimensions>().width = {100.0f, CSSUnit::PX};
-    child->style().modify<Dimensions>().height = {50.0f, CSSUnit::PX};
-    child->style().modify<CSSFlex>().flexGrow = 1;
-    root->addChild(child);
-
-    root->calculate(WIDTH, HEIGHT);
-    printNode(root.get());
-
-    CHECK(approxEqual(child->layout().computedFlexBasis, 360.0f), "Child fills 360px (400-20-20)");
-    CHECK(approxEqual(child->layout().computedX, 20.0f), "Child starts at x=20 (after left padding)");
-
-    std::cout << (passed ? "  PASSED\n" : "") << "\n";
-    return passed;
-}
-
 
 int main() {
+    std::cout << "Starting Massive Layout Benchmark..." << std::endl;
+
+    // 1. Setup Root Node
     auto root = std::make_shared<Node>();
     root->setDisplay(OuterDisplay::Flex);
-    root->style().modify<Dimensions>().width = 100.0f;
-    root->style().modify<Dimensions>().height = 100.0f;
     root->style().modify<CSSFlex>().direction = FlexDirection::Column;
+    root->style().modify<Dimensions>().width = 2000.0f; // Large width to accommodate items
+    root->style().modify<Dimensions>().height = CSSValue(NAN, CSSUnit::AUTO); // Height depends on content
 
-    auto root_child0 = std::make_shared<Node>();
-    root_child0->style().modify<CSSFlex>().flexGrow = 1.0f;
-    root_child0->style().modify<CSSFlex>().flexBasis = 50.0f;
-    root_child0->style().modify<Dimensions>().height = 20.0f;
-    root->addChild(root_child0);
+    const int NUM_CONTAINERS = 100;
+    const int NUM_ITEMS_PER_CONTAINER = 100;
+    int total_nodes = 1 + NUM_CONTAINERS + (NUM_CONTAINERS * NUM_ITEMS_PER_CONTAINER);
 
-    auto root_child1 = std::make_shared<Node>();
-    root_child1->style().modify<CSSFlex>().flexGrow = 1.0f;
-    root_child1->style().modify<Dimensions>().height = 10.0f;
-    root->addChild(root_child1);
+    std::vector<std::shared_ptr<Node> > containers;
+    std::vector<std::shared_ptr<Node> > all_items;
+    all_items.reserve(NUM_CONTAINERS * NUM_ITEMS_PER_CONTAINER);
 
-    auto root_child2 = std::make_shared<Node>();
-    root_child2->style().modify<CSSFlex>().flexGrow = 1.0f;
-    root_child2->style().modify<Dimensions>().height = 10.0f;
-    root->addChild(root_child2);
+    // 2. Build the Tree
+    std::cout << "Building tree with " << total_nodes << " nodes..." << std::endl;
 
-    root->calculate(100, 100);
+    for (int i = 0; i < NUM_CONTAINERS; ++i) {
+        auto container = std::make_shared<Node>();
+        container->setDisplay(OuterDisplay::Flex);
+        container->style().modify<CSSFlex>().direction = FlexDirection::Row;
+        container->style().modify<CSSFlex>().wrap = FlexWrap::Wrap;
+        container->style().modify<Dimensions>().width = 100.0f; // Percentage would be better but using fixed for now
+        // Or set to 100% via CSSValue if supported, but let's stick to float for simplicity unless we want to test % resolution
+
+        // Add some variety to containers
+        if (i % 2 == 0) {
+            container->style().modify<PaddingEdge>().left = 10.0f;
+            container->style().modify<PaddingEdge>().right = 10.0f;
+            container->style().modify<PaddingEdge>().top = 5.0f;
+            container->style().modify<PaddingEdge>().bottom = 5.0f;
+        }
+
+        for (int j = 0; j < NUM_ITEMS_PER_CONTAINER; ++j) {
+            auto item = std::make_shared<Node>();
+
+            // Base styles
+            item->style().modify<Dimensions>().width = 20.0f;
+            item->style().modify<Dimensions>().height = 20.0f;
+
+            // Variety based on index
+            int idx = i * NUM_ITEMS_PER_CONTAINER + j;
+
+            // 1. Flex Grow
+            if (idx % 2 == 0) {
+                item->style().modify<CSSFlex>().flexGrow = 1.0f;
+            }
+
+            // 2. Flex Shrink (default is 1, let's change it)
+            if (idx % 3 == 0) {
+                item->style().modify<CSSFlex>().flexShrink = 0.5f;
+            }
+
+            // 3. Margin
+            if (idx % 5 == 0) {
+                item->style().modify<MarginEdge>().left = 2.0f;
+                item->style().modify<MarginEdge>().right = 2.0f;
+                item->style().modify<MarginEdge>().top = 2.0f;
+                item->style().modify<MarginEdge>().bottom = 2.0f;
+            }
+
+            // 4. Padding
+            if (idx % 7 == 0) {
+                item->style().modify<PaddingEdge>().left = 5.0f;
+            }
+
+            // 5. Flex Basis
+            if (idx % 11 == 0) {
+                item->style().modify<CSSFlex>().flexBasis = 50.0f;
+            }
+
+            if (idx % 13 == 0) {
+                item->style().modify<MarginEdge>().right = {};
+            }
+            container->addChild(item);
+            all_items.push_back(item);
+        }
+        root->addChild(container);
+        containers.push_back(container);
+    }
+
+    // 3. Initial Layout
+    measureTime([&]() {
+        root->calculate(2000.0f, 2000.0f); // Providing available space
+    }, "Initial Layout");
+
+    // 4. Edit one child (deep in the tree)
+    if (!all_items.empty()) {
+        int target_idx = all_items.size() / 2; // Middle item
+        auto target = all_items[target_idx];
+
+        std::cout << "\nModifying item " << target_idx << " width to 50.0f..." << std::endl;
+        target->style().modify<Dimensions>().width = 50.0f;
+
+        measureTime([&]() {
+            root->calculate(2000.0f, 2000.0f);
+        }, "Recalculate after 1 edit");
+    }
+
+    // 5. Edit two children in different containers
+    if (containers.size() >= 2) {
+        auto item1 = containers[0]->children[0];
+        auto item2 = containers[containers.size() - 1]->children[0];
+
+        std::cout << "\nModifying first item of first container (height=40) and last container (margin=10)..." <<
+                std::endl;
+        item1->style().modify<Dimensions>().height = 40.0f;
+        item2->style().modify<MarginEdge>().top = 10.0f;
+
+        measureTime([&]() {
+            root->calculate(2000.0f, 2000.0f);
+        }, "Recalculate after 2 edits");
+    }
+
+    // 6. Multiple edits to trigger complex layout changes
+    if (!all_items.empty()) {
+        std::cout << "\nModifying 100 items (flex-grow toggles)..." << std::endl;
+        for (int k = 0; k < 100; ++k) {
+            int idx = (k * 17) % all_items.size();
+            all_items[idx]->style().modify<CSSFlex>().flexGrow = 2.0f;
+        }
+
+        measureTime([&]() {
+            root->calculate(2000.0f, 2000.0f);
+        }, "Recalculate after 100 edits");
+    }
+
+    // 7. Remove one child and recalculate
+    if (!all_items.empty()) {
+        auto item_to_remove = all_items.back();
+        auto parent = item_to_remove->parent(); // Node*
+        
+        std::cout << "\nRemoving one item from the last container..." << std::endl;
+        if(parent) {
+             parent->removeChild(item_to_remove);
+             all_items.pop_back(); // Remove from our tracking list too
+             
+             measureTime([&]() {
+                root->calculate(2000.0f, 2000.0f);
+            }, "Recalculate after removing 1 child");
+        }
+    }
+
+    return 0;
 }

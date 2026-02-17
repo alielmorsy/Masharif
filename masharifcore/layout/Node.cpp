@@ -4,7 +4,19 @@
 
 #include "Node.h"
 
+#include <algorithm>
+#include <vector>
+
 using namespace _NAMESPACE;
+
+void Node::removeChild(SharedNode &child) {
+    auto it = std::find(children.begin(), children.end(), child);
+    if (it != children.end()) {
+        children.erase(it);
+        _style.dirty = true;
+    }
+}
+
 
 static Node *findRelativeParent(Node *child) {
     auto current = child;
