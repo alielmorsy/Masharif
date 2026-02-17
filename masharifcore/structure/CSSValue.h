@@ -2,7 +2,8 @@
 #define CSSVALUE_H
 #include <cmath>
 
-namespace _NAMESPACE {
+namespace
+_NAMESPACE {
     enum class CSSUnit {
         PX = 0,
         PERCENT,
@@ -13,7 +14,7 @@ namespace _NAMESPACE {
         float value = 0.0f;
         CSSUnit unit = CSSUnit::AUTO;
 
-        CSSValue(const float val = NAN) : value(val), unit(std::isnan(val) ? CSSUnit::AUTO : CSSUnit::PX) {
+        explicit CSSValue(const float val = NAN) : value(val), unit(std::isnan(val) ? CSSUnit::AUTO : CSSUnit::PX) {
         }
 
         CSSValue(const float val, CSSUnit u) : value(val), unit(u) {
@@ -29,6 +30,10 @@ namespace _NAMESPACE {
 
         [[nodiscard]] bool isUndefined() const {
             return std::isnan(value);
+        }
+
+        inline bool operator==( const CSSValue &rhs) const {
+            return value == rhs.value && unit == rhs.unit;
         }
     };
 }

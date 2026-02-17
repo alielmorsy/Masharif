@@ -7,6 +7,8 @@
 #include "CSSValue.h"
 #include <masharifcore/macros.h>
 
+#include "BoxInfo.h"
+
 namespace
 _NAMESPACE {
     struct Dimensions {
