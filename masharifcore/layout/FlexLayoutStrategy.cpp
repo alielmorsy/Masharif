@@ -150,8 +150,8 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         }
 
         float gap = isRow
-                        ? containerStyle.flex().gap.row.resolveValue(availableWidth)
-                        : containerStyle.flex().gap.column.resolveValue(availableHeight);
+                        ? containerStyle.flex().gap.column.resolveValue(availableWidth)
+                        : containerStyle.flex().gap.row.resolveValue(availableHeight);
         float mainStartPos = paddingStart;
         if (isReverse) {
             mainStartPos = containerMainSize - paddingEnd;
@@ -263,8 +263,8 @@ FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<std::shared_ptr<Node>
     auto &gap = containerStyle.flex().gap;
 
     float gapSize = isRow
-                        ? gap.row.resolveValue(containerLayout.computedWidth)
-                        : gap.column.resolveValue(containerLayout.computedHeight);
+                        ? gap.column.resolveValue(containerLayout.computedWidth)
+                        : gap.row.resolveValue(containerLayout.computedHeight);
 
     float takenSize = 0;
 
@@ -382,6 +382,17 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
         float freeSpace = availableSpace - frozenSize;
         for (size_t i = 0; i < line.flexItems.size(); i++) {
             if (!frozen[i]) freeSpace -= baseSizes[i];
+        }
+
+        DEF_NODE_STYLE(container);
+        DEF_NODE_LAYOUT(container);
+        auto &gap = containerStyle.flex().gap;
+        float gapSize = isRow
+                        ? gap.column.resolveValue(containerLayout.computedWidth)
+                        : gap.row.resolveValue(containerLayout.computedHeight);
+
+        if (line.flexItems.size() > 1) {
+             freeSpace -= (line.flexItems.size() - 1) * gapSize;
         }
 
         // 2. Distribute free space to unfrozen items

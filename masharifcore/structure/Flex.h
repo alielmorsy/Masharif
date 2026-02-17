@@ -19,7 +19,7 @@ _NAMESPACE {
 
     struct CSSFlex {
         JustifyContent justifyContent = JustifyContent::FlexStart;
-        AlignItems alignItems = AlignItems::FlexStart;
+        AlignItems alignItems = AlignItems::Stretch;
         AlignContent alignContent = AlignContent::Stretch;
         AlignItems alignSelf = AlignItems::AUTO_ALIGN;
         CSSValue flexBasis;

@@ -1,9 +1,8 @@
 #ifndef CSSVALUE_H
 #define CSSVALUE_H
 #include <cmath>
-
-namespace
-_NAMESPACE {
+#include <masharifcore/macros.h>
+namespace  _NAMESPACE {
     enum class CSSUnit {
         PX = 0,
         PERCENT,
@@ -14,7 +13,7 @@ _NAMESPACE {
         float value = 0.0f;
         CSSUnit unit = CSSUnit::AUTO;
 
-        explicit CSSValue(const float val = NAN) : value(val), unit(std::isnan(val) ? CSSUnit::AUTO : CSSUnit::PX) {
+        CSSValue(const float val = NAN) : value(val), unit(std::isnan(val) ? CSSUnit::AUTO : CSSUnit::PX) {
         }
 
         CSSValue(const float val, CSSUnit u) : value(val), unit(u) {

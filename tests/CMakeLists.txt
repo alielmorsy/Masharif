@@ -19,6 +19,7 @@ add_executable(unit_tests
     AlignmentTests.cpp
     DimensionTests.cpp
     SpacingTests.cpp
+    GapTests.cpp
 )
 
 target_link_libraries(unit_tests
