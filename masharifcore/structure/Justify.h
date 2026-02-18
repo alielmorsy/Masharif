@@ -1,5 +1,5 @@
 #pragma once
-#include "../macros.h"
+#include <masharifcore/macros.h>
 
 namespace masharif {
     ENUM_BEGIN(JustifyContent) {

@@ -1,5 +1,4 @@
-#ifndef LAYOUTSTRATEGY_H
-#define LAYOUTSTRATEGY_H
+#pragma once
 
 
 namespace masharif {
@@ -19,4 +18,3 @@ namespace masharif {
         virtual void layout(float availableWidth, float availableHeight) = 0;
     };
 }
-#endif //LAYOUTSTRATEGY_H

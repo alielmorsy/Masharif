@@ -4,7 +4,6 @@
 #include "masharifcore/structure/CSSValue.h"
 #include "masharifcore/structure/Justify.h"
 #include <algorithm>
-#include <cmath>
 #include <limits>
 using namespace masharif;
 

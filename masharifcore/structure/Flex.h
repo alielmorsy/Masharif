@@ -1,9 +1,5 @@
-//
-// Created by Ali Elmorsy on 3/24/2025.
-//
+#pragma once
 
-#ifndef FLEX_H
-#define FLEX_H
 #include "Align.h"
 #include "CSSValue.h"
 #include "FlexDirection.h"
@@ -36,9 +32,5 @@ namespace masharif {
         [[nodiscard]] bool isReverse() const {
             return direction == FlexDirection::RowReverse || direction == FlexDirection::ColumnReverse;
         }
-
-
     };
 }
-
-#endif //FLEX_H

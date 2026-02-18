@@ -1,7 +1,8 @@
-#ifndef CSSVALUE_H
-#define CSSVALUE_H
+#pragma once
+
 #include <cmath>
 #include <masharifcore/macros.h>
+
 namespace masharif {
     enum class CSSUnit {
         PX = 0,
@@ -31,9 +32,8 @@ namespace masharif {
             return std::isnan(value);
         }
 
-        inline bool operator==( const CSSValue &rhs) const {
+        inline bool operator==(const CSSValue &rhs) const {
             return value == rhs.value && unit == rhs.unit;
         }
     };
 }
-#endif

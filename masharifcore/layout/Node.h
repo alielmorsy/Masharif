@@ -1,5 +1,4 @@
-#ifndef NODE_H
-#define NODE_H
+#pragma once
 
 #include <memory>
 #include <masharifcore/structure/Style.h>
@@ -86,5 +85,3 @@ namespace masharif {
         Layout _layout{};
     };
 }
-
-#endif //NODE_H

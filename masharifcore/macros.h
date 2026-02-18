@@ -1,19 +1,9 @@
-#ifndef H_masharif_MACRO
-#define H_masharif_MACRO
+#pragma once
+
 #include <array>
 #include <string_view>
 
 
-// Platform-specific visibility settings
-#ifdef _WIN32
-#define EXPORT_ENUM __declspec(dllexport)
-#elif defined(__GNUC__) || defined(__clang__)
-  #define EXPORT_ENUM __attribute__((visibility("default")))
-#else
-  #define EXPORT_ENUM
-#endif
-
-// Enum declaration macros (uses scoped `enum class`)
 #define ENUM_BEGIN(NAME) enum class NAME
 #define ENUM_END(NAME)
 
@@ -46,4 +36,3 @@ void markDirty() { if (markDirtyCallback) markDirtyCallback(); } \
 
 #define DEF_NODE_LAYOUT(node) auto &node##Layout = node->layout()
 #define DEF_NODE_STYLE(node) auto &node##Style = node->style()
-#endif

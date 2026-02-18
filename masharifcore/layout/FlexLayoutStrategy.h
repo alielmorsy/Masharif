@@ -1,5 +1,5 @@
-#ifndef FLEXLAYOUTSTRATEGY_H
-#define FLEXLAYOUTSTRATEGY_H
+#pragma once
+
 #include <memory>
 
 #include "LayoutStrategy.h"
@@ -9,6 +9,7 @@
 
 namespace masharif {
     class Node;
+
     struct FlexLine {
         std::vector<Node *> flexItems;
         int numberOfAutoMargin;
@@ -39,6 +40,3 @@ namespace masharif {
         void updateCrossSize(std::vector<FlexLine> &lines);
     };
 }
-
-
-#endif //FLEXLAYOUTSTRATEGY_H
