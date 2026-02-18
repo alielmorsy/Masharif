@@ -46,32 +46,32 @@ public:
 private:
     // Use function overloading instead of if constexpr
     template<typename T>
-    typename std::enable_if<std::is_same<T, CSSFlex>::value, T&>::type getProperty() {
+    std::enable_if_t<std::is_same_v<T, CSSFlex>, T&> getProperty() {
         return m_flexProps;
     }
 
     template<typename T>
-    typename std::enable_if<std::is_same<T, MarginEdge>::value, T&>::type getProperty() {
+    std::enable_if_t<std::is_same_v<T, MarginEdge>, T&> getProperty() {
         return m_marginProps;
     }
 
     template<typename T>
-    typename std::enable_if<std::is_same<T, PaddingEdge>::value, T&>::type getProperty() {
+    std::enable_if_t<std::is_same_v<T, PaddingEdge>, T&> getProperty() {
         return m_paddingProps;
     }
 
     template<typename T>
-    typename std::enable_if<std::is_same<T, BorderProperties>::value, T&>::type getProperty() {
+    std::enable_if_t<std::is_same_v<T, BorderProperties>, T&> getProperty() {
         return m_borderProps;
     }
 
     template<typename T>
-    typename std::enable_if<std::is_same<T, Dimensions>::value, T&>::type getProperty() {
+    std::enable_if_t<std::is_same_v<T, Dimensions>, T&> getProperty() {
         return m_dimensions;
     }
 
     template<typename T>
-    typename std::enable_if<std::is_same<T, PositionOffsets>::value, T&>::type getProperty() {
+    std::enable_if_t<std::is_same_v<T, PositionOffsets>, T&> getProperty() {
         return m_offsets;
     }
 

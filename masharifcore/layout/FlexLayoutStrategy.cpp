@@ -47,12 +47,12 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
                          return a->style().flex().order < b->style().flex().order;
                      });
 
-    // 3. Compute flex basis for each in-flow child
+    // 3. Compute flex basis for each inflow child
     for (auto &child: inFlowChildren) {
         float childAvailableWidth = availableWidth;
         float childAvailableHeight = availableHeight;
-        
-        const auto& dim = child->style().dimensions(); // Access style directly
+
+        const auto &dim = child->style().dimensions(); // Access style directly
         if (isRow && dim.width.unit == CSSUnit::AUTO) childAvailableWidth = std::numeric_limits<float>::quiet_NaN();
         if (!isRow && dim.height.unit == CSSUnit::AUTO) childAvailableHeight = std::numeric_limits<float>::quiet_NaN();
 
@@ -63,10 +63,10 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         auto savedMaxWidth = childDims.maxWidth;
         auto savedMaxHeight = childDims.maxHeight;
 
-        childDims.minWidth = CSSValue(0);
-        childDims.minHeight = CSSValue(0);
-        childDims.maxWidth = CSSValue(NAN);
-        childDims.maxHeight = CSSValue(NAN);
+        childDims.minWidth = {0};
+        childDims.minHeight = {0};
+        childDims.maxWidth = {};
+        childDims.maxHeight = {};
 
         child->layoutImpl(childAvailableWidth, childAvailableHeight);
 
@@ -104,14 +104,16 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
 
     if (std::isnan(availableWidth)) {
         if (containerStyle.dimensions().width.unit == CSSUnit::AUTO) {
-            availableWidth = containerLayout.computedWidth = (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
+            availableWidth = containerLayout.computedWidth =
+                             (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
         } else {
             availableWidth = containerLayout.computedWidth - paddingBorderRow;
         }
     }
     if (std::isnan(availableHeight)) {
         if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
-            availableHeight = containerLayout.computedHeight = (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
+            availableHeight = containerLayout.computedHeight =
+                              (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
         } else {
             availableHeight = containerLayout.computedHeight - paddingBorderCol;
         }
@@ -396,11 +398,11 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
         DEF_NODE_LAYOUT(container);
         auto &gap = containerStyle.flex().gap;
         float gapSize = isRow
-                        ? gap.column.resolveValue(containerLayout.computedWidth)
-                        : gap.row.resolveValue(containerLayout.computedHeight);
+                            ? gap.column.resolveValue(containerLayout.computedWidth)
+                            : gap.row.resolveValue(containerLayout.computedHeight);
 
         if (line.flexItems.size() > 1) {
-             freeSpace -= (line.flexItems.size() - 1) * gapSize;
+            freeSpace -= (line.flexItems.size() - 1) * gapSize;
         }
 
         // 2. Distribute free space to unfrozen items
@@ -462,156 +464,6 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
     }
 }
 
-//     if (lines.empty()) return;
-//
-//     DEF_NODE_STYLE(container); // Access container style
-//     DEF_NODE_LAYOUT(container); // Access container style
-//     const bool isRow = containerStyle.flex().isRow();
-//     float containerCrossSize = isRow ? containerLayout.computedHeight : containerLayout.computedWidth;
-//
-//     float totalLineCrossSize = 0;
-//     bool isReverse = containerStyle.flex().wrap == FlexWrap::WrapReverse;
-//     for (const auto &line: lines) {
-//         totalLineCrossSize += line.crossSize;
-//     }
-//
-//     float extraSpace = std::max(0.0f, containerCrossSize - totalLineCrossSize);
-//     float crossOffset = 0;
-//     float lineSpacing = 0;
-//
-//     switch (containerStyle.flex().alignContent) {
-//         case AlignContent::FlexCenter:
-//             crossOffset = extraSpace / 2;
-//             break;
-//         case AlignContent::FlexEnd:
-//             crossOffset = extraSpace;
-//             break;
-//         case AlignContent::SpaceBetween:
-//             if (lines.size() > 1) {
-//                 lineSpacing = extraSpace / (lines.size() - 1);
-//             }
-//             break;
-//         case AlignContent::SpaceAround:
-//             if (!lines.empty()) {
-//                 lineSpacing = extraSpace / lines.size();
-//                 crossOffset = lineSpacing / 2;
-//             }
-//             break;
-//         case AlignContent::SpaceEvenly:
-//             if (!lines.empty()) {
-//                 lineSpacing = extraSpace / (lines.size() + 1);
-//                 crossOffset = lineSpacing;
-//             }
-//             break;
-//         case AlignContent::Stretch:
-//             if (!lines.empty() && extraSpace > 0) {
-//                 float additionalSize = extraSpace / lines.size();
-//                 for (auto &line: lines) {
-//                     line.crossSize += additionalSize;
-//                 }
-//             }
-//             break;
-//         default:
-//             break;
-//     }
-//
-//     for (auto &line: lines) {
-//         for (auto child: line.flexItems) {
-//             DEF_NODE_STYLE(child); // Access child's style
-//             auto &dimension = childStyle.dimensions();
-//             if (dimension.display == OuterDisplay::None) continue;
-//             if (dimension.position != PositionType::Static &&
-//                 dimension.position != PositionType::Relative) {
-//                 continue;
-//             }
-//
-//
-//             DEF_NODE_LAYOUT(child); // Access child's layout
-//
-//             float childCrossSize = isRow ? childLayout.computedHeight : childLayout.computedWidth;
-//
-//             AlignItems alignment = (childStyle.flex().alignSelf != AlignItems::AUTO_ALIGN)
-//                                        ? childStyle.flex().alignSelf
-//                                        : containerStyle.flex().alignItems;
-//
-//             if (alignment == AlignItems::Stretch &&
-//                 (isRow
-//                      ? dimension.height.unit == CSSUnit::AUTO
-//                      : dimension.width.unit == CSSUnit::AUTO)) {
-//                 float marginsCross = isRow
-//                                          ? (childStyle.margin().top.resolveValue(line.crossSize) +
-//                                             childStyle.margin().bottom.resolveValue(line.crossSize))
-//                                          : (childStyle.margin().left.resolveValue(line.crossSize) +
-//                                             childStyle.margin().right.resolveValue(line.crossSize));
-//
-//                 float stretchedSize = line.crossSize - marginsCross;
-//                 if (stretchedSize > 0) {
-//                     if (isRow) {
-//                         childLayout.computedHeight = stretchedSize;
-//                     } else {
-//                         childLayout.computedWidth = stretchedSize;
-//                     }
-//                     childCrossSize = stretchedSize;
-//                 }
-//             }
-//
-//             float marginStart = isRow
-//                                     ? childStyle.margin().top.resolveValue(line.crossSize)
-//                                     : childStyle.margin().left.resolveValue(line.crossSize);
-//             float marginEnd = isRow
-//                                   ? childStyle.margin().bottom.resolveValue(line.crossSize)
-//                                   : childStyle.margin().right.resolveValue(line.crossSize);
-//
-//             bool hasAutoMarginStart = isRow
-//                                           ? childStyle.margin().top.unit == CSSUnit::AUTO
-//                                           : childStyle.margin().left.unit == CSSUnit::AUTO;
-//             bool hasAutoMarginEnd = isRow
-//                                         ? childStyle.margin().bottom.unit == CSSUnit::AUTO
-//                                         : childStyle.margin().right.unit == CSSUnit::AUTO;
-//             int autoMarginCount = (hasAutoMarginStart ? 1 : 0) + (hasAutoMarginEnd ? 1 : 0);
-//
-//             float availableSpace = line.crossSize - childCrossSize - (marginStart + marginEnd);
-//
-//             if (autoMarginCount > 0 && availableSpace > 0) {
-//                 float autoMarginSize = availableSpace / autoMarginCount;
-//                 if (hasAutoMarginStart) marginStart = autoMarginSize;
-//                 if (hasAutoMarginEnd) marginEnd = autoMarginSize;
-//                 alignment = AlignItems::FlexStart;
-//             } else {
-//                 if (hasAutoMarginStart) marginStart = 0;
-//                 if (hasAutoMarginEnd) marginEnd = 0;
-//             }
-//
-//             float itemCrossPos = 0;
-//             switch (alignment) {
-//                 case AlignItems::FlexStart:
-//                     itemCrossPos = crossOffset + marginStart;
-//                     break;
-//                 case AlignItems::FlexEnd:
-//                     itemCrossPos = crossOffset + line.crossSize - childCrossSize - marginEnd;
-//                     break;
-//                 case AlignItems::FlexCenter:
-//                     itemCrossPos = crossOffset + (line.crossSize - childCrossSize) / 2 + (marginStart - marginEnd) / 2;
-//                     break;
-//                 case AlignItems::Stretch:
-//                     itemCrossPos = crossOffset + marginStart;
-//                     break;
-//                 default:
-//                     itemCrossPos = crossOffset + marginStart;
-//                     break;
-//             }
-//
-//             if (isRow) {
-//                 childLayout.computedY = itemCrossPos;
-//             } else {
-//                 childLayout.computedX = itemCrossPos;
-//             }
-//         }
-//
-//         crossOffset += line.crossSize + lineSpacing;
-//     }
-// }
-
 void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
     if (lines.empty()) return;
 
@@ -621,10 +473,12 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
     float containerCrossSize = isRow ? containerLayout.computedHeight : containerLayout.computedWidth;
 
     float width = containerLayout.computedWidth;
-    float paddingStart = isRow ? containerStyle.padding().top.resolveValue(width)
-                               : containerStyle.padding().left.resolveValue(width);
-    float paddingEnd = isRow ? containerStyle.padding().bottom.resolveValue(width)
-                             : containerStyle.padding().right.resolveValue(width);
+    float paddingStart = isRow
+                             ? containerStyle.padding().top.resolveValue(width)
+                             : containerStyle.padding().left.resolveValue(width);
+    float paddingEnd = isRow
+                           ? containerStyle.padding().bottom.resolveValue(width)
+                           : containerStyle.padding().right.resolveValue(width);
 
     float totalLineCrossSize = 0;
     bool isReverse = containerStyle.flex().wrap == FlexWrap::WrapReverse;
