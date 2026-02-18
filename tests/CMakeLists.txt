@@ -21,6 +21,7 @@ add_executable(unit_tests
     SpacingTests.cpp
     GapTests.cpp
     BenchmarkTests.cpp
+    ComputedMarginTests.cpp
 )
 
 target_link_libraries(unit_tests

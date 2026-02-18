@@ -103,10 +103,18 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
     float paddingBorderCol = p.top.value + p.bottom.value + b.widthTop.value + b.widthBottom.value;
 
     if (std::isnan(availableWidth)) {
-        availableWidth = containerLayout.computedWidth = (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
+        if (containerStyle.dimensions().width.unit == CSSUnit::AUTO) {
+            availableWidth = containerLayout.computedWidth = (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
+        } else {
+            availableWidth = containerLayout.computedWidth - paddingBorderRow;
+        }
     }
     if (std::isnan(availableHeight)) {
-        availableHeight = containerLayout.computedHeight = (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
+        if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
+            availableHeight = containerLayout.computedHeight = (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
+        } else {
+            availableHeight = containerLayout.computedHeight - paddingBorderCol;
+        }
     }
 
     // 4. Build flex lines from inFlowChildren
