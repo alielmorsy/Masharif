@@ -5,7 +5,7 @@
 #include "NormalFlowStrategy.h"
 
 #include "Node.h"
-using namespace _NAMESPACE;
+using namespace masharif;
 
 
 void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {

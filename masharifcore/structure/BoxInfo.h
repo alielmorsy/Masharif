@@ -1,8 +1,7 @@
 #pragma once
 #include "../macros.h"
 
-namespace
-_NAMESPACE {
+namespace masharif {
     ENUM_BEGIN(OuterDisplay) { None, Block, Inline, InlineBlock, Flex, InlineFlex } ENUM_END(OuterDisplay);
 
     ENUM_BEGIN(InnerLayout) { NormalFlow, Flex, Grid } ENUM_END(InnerLayout);

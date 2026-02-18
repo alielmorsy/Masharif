@@ -1,10 +1,8 @@
 #ifndef OFFSETS_H
 #define OFFSETS_H
 #include "CSSValue.h"
-#include "../macros.h"
 
-namespace
-_NAMESPACE {
+namespace masharif {
     struct Edge {
         CSSValue left{0, CSSUnit::PX};
         CSSValue top{0, CSSUnit::PX};

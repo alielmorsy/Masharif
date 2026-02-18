@@ -1,8 +1,7 @@
 #ifndef NODE_H
 #define NODE_H
-#include <assert.h>
+
 #include <memory>
-#include <masharifcore/macros.h>
 #include <masharifcore/structure/Style.h>
 
 
@@ -12,8 +11,7 @@
 #include "FlexLayoutStrategy.h"
 
 
-namespace
-_NAMESPACE {
+namespace masharif {
     class Node;
     using SharedNode = std::shared_ptr<Node>;
 

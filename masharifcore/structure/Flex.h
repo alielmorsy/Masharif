@@ -10,8 +10,7 @@
 #include "Justify.h"
 
 
-namespace
-_NAMESPACE {
+namespace masharif {
     struct Gap {
         CSSValue row;
         CSSValue column;

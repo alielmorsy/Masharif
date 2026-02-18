@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "masharifcore/Masharif.h"
 
-using namespace _NAMESPACE;
+using namespace masharif;
 constexpr float NaN = std::numeric_limits<float>::quiet_NaN();
 TEST(SpacingTests, padding_no_size) {
     auto root = std::make_shared<Node>();

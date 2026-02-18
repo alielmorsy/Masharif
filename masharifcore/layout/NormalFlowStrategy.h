@@ -8,8 +8,7 @@
 #include "masharifcore/macros.h"
 #include <vector>
 
-namespace
-_NAMESPACE {
+namespace masharif {
     class NormalFlowStrategy : public LayoutStrategy {
     public:
         explicit NormalFlowStrategy(Node *node)

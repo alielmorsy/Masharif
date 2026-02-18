@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-using namespace _NAMESPACE;
+using namespace masharif;
 
 static float calculatedNeededMargin(bool isRow, const MarginEdge &margin, float mainAxisSize) {
     float neededMargin = 0;

@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <vector>
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 void Node::removeChild(SharedNode &child) {
     auto it = std::find(children.begin(), children.end(), child);

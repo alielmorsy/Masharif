@@ -3,8 +3,7 @@
 #include <memory>
 #include <masharifcore/macros.h>
 
-namespace
-_NAMESPACE {
+namespace masharif {
 
 
     struct Layout {

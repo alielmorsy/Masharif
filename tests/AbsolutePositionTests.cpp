@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "masharifcore/Masharif.h"
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 TEST(AbsolutePositionTests, absolute_layout_width_height_start_top) {
     auto root = std::make_shared<Node>();

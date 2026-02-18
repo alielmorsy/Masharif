@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "masharifcore/Masharif.h"
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 TEST(AlignmentTests, justify_content_row_flex_start) {
     auto root = std::make_shared<Node>();

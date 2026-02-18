@@ -2,7 +2,7 @@
 #define CSSVALUE_H
 #include <cmath>
 #include <masharifcore/macros.h>
-namespace  _NAMESPACE {
+namespace masharif {
     enum class CSSUnit {
         PX = 0,
         PERCENT,

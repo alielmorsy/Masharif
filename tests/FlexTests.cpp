@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "masharifcore/Masharif.h"
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 TEST(FlexTests, flex_basis_flex_grow_column) {
     auto root = std::make_shared<Node>();

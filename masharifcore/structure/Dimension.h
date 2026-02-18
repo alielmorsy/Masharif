@@ -5,12 +5,11 @@
 #ifndef DIMENSION_H
 #define DIMENSION_H
 #include "CSSValue.h"
-#include <masharifcore/macros.h>
+
 
 #include "BoxInfo.h"
 
-namespace
-_NAMESPACE {
+namespace masharif {
     struct Dimensions {
         OuterDisplay display = OuterDisplay::Block;
         CSSValue width;

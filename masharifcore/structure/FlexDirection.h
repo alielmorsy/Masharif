@@ -1,8 +1,7 @@
 #pragma once
 #include "../macros.h"
 
-namespace
-_NAMESPACE {
+namespace masharif {
     ENUM_BEGIN(FlexDirection) {
         Column = 0,
         ColumnReverse = 1,

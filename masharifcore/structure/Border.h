@@ -2,11 +2,10 @@
 #define BORDER_H
 
 #include "CSSValue.h"
-#include "../macros.h"
 
 
-namespace
-_NAMESPACE {
+
+namespace masharif {
     struct BorderProperties {
         CSSValue widthTop{0};
         CSSValue widthBottom{0};
@@ -16,10 +15,6 @@ _NAMESPACE {
 
 
 
-        CSSValue topLeftRadius{0};
-        CSSValue topRightRadius{0};
-        CSSValue bottomLeftRadius{0};
-        CSSValue bottomRightRadius{0};
     };
 }
 #endif //BORDER_H

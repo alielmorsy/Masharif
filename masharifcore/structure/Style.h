@@ -7,8 +7,7 @@
 #include "Flex.h"
 #include <type_traits>
 
-namespace
-_NAMESPACE {
+namespace masharif {
     struct MarginEdge : Edge {
     };
 

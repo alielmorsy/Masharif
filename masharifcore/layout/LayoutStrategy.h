@@ -1,13 +1,10 @@
 #ifndef LAYOUTSTRATEGY_H
 #define LAYOUTSTRATEGY_H
 
-#include <masharifcore/macros.h>
 
-
-
-namespace
-_NAMESPACE {
+namespace masharif {
     class Node;
+
     struct LayoutStrategy {
     protected:
         Node *container;

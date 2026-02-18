@@ -3,7 +3,7 @@
 
 #include "masharifcore/Masharif.h"
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 TEST(MasharifTest, assert_default_values) {
     auto root = std::make_shared<Node>();

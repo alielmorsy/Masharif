@@ -4,7 +4,7 @@
 #include <iostream>
 #include "masharifcore/Masharif.h"
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 TEST(BenchmarkTests, MassiveLayoutBenchmark) {
     // 1. Create a massive layout

@@ -24,10 +24,7 @@ add_executable(unit_tests
     ComputedMarginTests.cpp
 )
 
-target_link_libraries(unit_tests
-    GTest::gtest_main
-    masharifcore
-)
+target_link_libraries(unit_tests  GTest::gtest_main masharif::masharifcore)
 
 include(GoogleTest)
 gtest_discover_tests(unit_tests)

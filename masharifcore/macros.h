@@ -3,7 +3,7 @@
 #include <array>
 #include <string_view>
 
-#define _NAMESPACE masharif
+
 // Platform-specific visibility settings
 #ifdef _WIN32
 #define EXPORT_ENUM __declspec(dllexport)

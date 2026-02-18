@@ -7,8 +7,7 @@
 #include "masharifcore/macros.h"
 #include <vector>
 
-namespace
-_NAMESPACE {
+namespace masharif {
     class Node;
     struct FlexLine {
         std::vector<Node *> flexItems;

@@ -4,7 +4,7 @@
 #include <memory>
 #include <masharifcore/Masharif.h>
 
-using namespace _NAMESPACE;
+using namespace masharif;
 
 // Helper to measure function execution time
 template<typename Func>
