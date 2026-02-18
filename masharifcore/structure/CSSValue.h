@@ -35,5 +35,20 @@ namespace masharif {
         inline bool operator==(const CSSValue &rhs) const {
             return value == rhs.value && unit == rhs.unit;
         }
+
+        float operator+(const CSSValue &rhs) const { return value + rhs.value; }
+        float operator-(const CSSValue &rhs) const { return value - rhs.value; }
+        float operator*(const CSSValue &rhs) const { return value * rhs.value; }
+        float operator/(const CSSValue &rhs) const { return value / rhs.value; }
+
+        float operator+(float rhs) const { return value + rhs; }
+        float operator-(float rhs) const { return value - rhs; }
+        float operator*(float rhs) const { return value * rhs; }
+        float operator/(float rhs) const { return value / rhs; }
+
+        friend float operator+(float lhs, const CSSValue &rhs) { return lhs + rhs.value; }
+        friend float operator-(float lhs, const CSSValue &rhs) { return lhs - rhs.value; }
+        friend float operator*(float lhs, const CSSValue &rhs) { return lhs * rhs.value; }
+        friend float operator/(float lhs, const CSSValue &rhs) { return lhs / rhs.value; }
     };
 }

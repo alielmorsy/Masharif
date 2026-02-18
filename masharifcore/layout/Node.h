@@ -71,7 +71,7 @@ namespace masharif {
             }
         }
 
-        void addChild(SharedNode &child) {
+        void addChild(const SharedNode &child) {
             children.push_back(child);
             child->_parent = this;
             _style.dirty = true;

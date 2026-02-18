@@ -37,7 +37,7 @@ void Node::startUpdatingPositions() {
         if (position != PositionType::Static &&
             position != PositionType::Relative) {
             child->startUpdatingPositions();
-            continue; // Skip non-static/relative positioned elements
+            continue;
         }
         DEF_NODE_LAYOUT(child);
         childLayout.computedX += computedX;
@@ -120,21 +120,18 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
             for (const auto &child: children) {
                 DEF_NODE_LAYOUT(child);
                 DEF_NODE_STYLE(child);
-                auto position = childStyle.dimensions().position;
+                const auto position = childStyle.dimensions().position;
                 auto &childMargin = childStyle.margin();
                 if (position == PositionType::Static || position == PositionType::Relative) {
                     maxChildBottom = std::max(maxChildBottom,
-                                              childLayout.computedY + childLayout.computedHeight + childMargin.bottom.
-                                              value
-                                              +
-                                              childMargin.top.value);
+                                              childLayout.computedY + childLayout.computedHeight + childMargin.bottom + childMargin.top);
                 }
             }
 
             auto &border = containerStyle.border();
-            _layout.computedHeight = maxChildBottom + _style.padding().top.value + _style.padding().bottom.value
+            _layout.computedHeight = maxChildBottom + _style.padding().top + _style.padding().bottom
                                      +
-                                     border.widthTop.value + border.widthBottom.value;
+                                     border.widthTop + border.widthBottom;
         }
     }
 
@@ -155,7 +152,7 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
     if (width.unit == CSSUnit::PX) {
         computedWidth = width.value;
     } else if (width.unit == CSSUnit::PERCENT) {
-        computedWidth = availableWidth * (width.value / 100.0f);
+        computedWidth = availableWidth * (width / 100.0f);
     } else {
         if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
             auto &margin = _style.margin();
@@ -163,8 +160,8 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
             auto &border = _style.border();
             float totalHorizontal = margin.left.resolveValue(availableWidth) +
                                     margin.right.resolveValue(availableWidth) +
-                                    padding.left.value + padding.right.value +
-                                    border.widthLeft.value + border.widthRight.value;
+                                    padding.left + padding.right +
+                                    border.widthLeft + border.widthRight;
             if (std::isnan(availableWidth)) {
                 computedWidth = 0.0f;
             } else {
@@ -177,16 +174,17 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
                 DEF_NODE_LAYOUT(child);
                 DEF_NODE_STYLE(child);
                 computedWidth = std::max(computedWidth, childLayout.computedWidth +
-                                                        childStyle.margin().left.resolveValue(0) + childStyle.margin(). right.resolveValue(0));
+                                                        childStyle.margin().left.resolveValue(0) + childStyle.margin().
+                                                        right.resolveValue(0));
             }
         }
     }
     auto &stylePadding = _style.padding();
     auto &styleBorder = _style.border();
-    float horizontalPadding = stylePadding.left.value + stylePadding.right.value +
-                              styleBorder.widthLeft.value + styleBorder.widthRight.value;
-    float verticalPadding = stylePadding.top.value + stylePadding.bottom.value +
-                            styleBorder.widthTop.value + styleBorder.widthBottom.value;
+    float horizontalPadding = stylePadding.left + stylePadding.right +
+                              styleBorder.widthLeft + styleBorder.widthRight;
+    float verticalPadding = stylePadding.top + stylePadding.bottom +
+                            styleBorder.widthTop + styleBorder.widthBottom;
 
     if (!std::isnan(computedWidth)) {
         if (minWidth.unit != CSSUnit::AUTO)
@@ -203,7 +201,7 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
         if (_parent) {
             auto &parentHeight = _parent->style().dimensions().height;
             if (height.unit != CSSUnit::AUTO) {
-                computedHeight = availableHeight * (parentHeight.value / 100.0f);
+                computedHeight = availableHeight * (parentHeight / 100.0f);
             }
         }
     }
@@ -225,12 +223,12 @@ void Node::positionOutOfFlowChild(Node *ancestor, float refWidth, float refHeigh
     float cbX = 0.0f, cbY = 0.0f;
     if (ancestor) {
         cbX = ancestor->_layout.computedX
-              + ancestor->_style.border().widthLeft.value
-              + ancestor->_style.padding().left.value;
+              + ancestor->_style.border().widthLeft
+              + ancestor->_style.padding().left;
 
         cbY = ancestor->_layout.computedY
-              + ancestor->_style.border().widthTop.value
-              + ancestor->_style.padding().top.value;;
+              + ancestor->_style.border().widthTop
+              + ancestor->_style.padding().top;;
     }
 
     auto &dimensions = _style.dimensions();
