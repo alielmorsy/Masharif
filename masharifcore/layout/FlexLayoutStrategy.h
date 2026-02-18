@@ -30,9 +30,8 @@ namespace masharif {
         void layout(float availableWidth, float availableHeight) override;
 
     private:
-        FlexLine calculateFlexLine(std::vector<std::shared_ptr<Node> >::iterator &iterator,
-                                   std::vector<std::shared_ptr<Node> >::iterator &end, float totalMainAxisSize,
-                                   size_t lineCount);
+        FlexLine calculateFlexLine(std::vector<Node *>::iterator &iterator,
+                                   std::vector<Node *>::iterator &end, float totalMainAxisSize);
 
         void resolveFlexibleLengths(FlexLine &line, float availableSpace, bool isRow, float availableWidth,
                                     float availableHeight);

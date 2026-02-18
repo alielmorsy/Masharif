@@ -29,20 +29,20 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
     const bool isReverse = containerStyle.flex().isReverse();
 
     // 1. Separate out-of-flow children and build in-flow list
-    std::vector<std::shared_ptr<Node> > inFlowChildren;
+    std::vector<Node *> inFlowChildren;
     inFlowChildren.reserve(children.size());
     for (auto &child: children) {
         auto pos = child->style().dimensions().position;
         if (pos != PositionType::Static && pos != PositionType::Relative) {
             container->outOfFlowChildren.push_back(child);
         } else {
-            inFlowChildren.push_back(child);
+            inFlowChildren.push_back(child.get());
         }
     }
 
     // 2. Sort by CSS order property (stable to preserve DOM order for equal values)
     std::stable_sort(inFlowChildren.begin(), inFlowChildren.end(),
-                     [](const std::shared_ptr<Node> &a, const std::shared_ptr<Node> &b) {
+                     [](Node *a, Node *b) {
                          return a->style().flex().order < b->style().flex().order;
                      });
 
@@ -51,7 +51,7 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         float childAvailableWidth = availableWidth;
         float childAvailableHeight = availableHeight;
 
-        const auto &dim = child->style().dimensions(); // Access style directly
+        const auto &dim = child->style().dimensions();
         if (isRow && dim.width.unit == CSSUnit::AUTO) childAvailableWidth = std::numeric_limits<float>::quiet_NaN();
         if (!isRow && dim.height.unit == CSSUnit::AUTO) childAvailableHeight = std::numeric_limits<float>::quiet_NaN();
 
@@ -84,10 +84,10 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
             childLayout.computedFlexBasis = std::isnan(resolved) ? 0 : resolved;
         } else {
             auto &p = childStyle.padding();
-            auto &b = childStyle.border();
+            const auto &[widthTop, widthBottom, widthLeft, widthRight] = childStyle.border();
             float paddingBorder = isRow
-                                      ? p.left.value + p.right.value + b.widthLeft.value + b.widthRight.value
-                                      : p.top.value + p.bottom.value + b.widthTop.value + b.widthBottom.value;
+                                      ? p.left.value + p.right.value + widthLeft.value + widthRight.value
+                                      : p.top.value + p.bottom.value + widthTop.value + widthBottom.value;
             childLayout.computedFlexBasis = childStyle.flex().flexBasis.resolveValue(basisReference) + paddingBorder;
         }
 
@@ -129,7 +129,7 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
     std::vector<FlexLine> lines;
 
     for (; currentIterator != end; lineCount++) {
-        FlexLine line = calculateFlexLine(currentIterator, end, availableMainAxisSize, lineCount);
+        FlexLine line = calculateFlexLine(currentIterator, end, availableMainAxisSize);
         lines.push_back(line);
 
         float containerMainSize = isRow ? containerLayout.computedWidth : containerLayout.computedHeight;
@@ -260,10 +260,9 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
 }
 
 
-FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<std::shared_ptr<Node> >::iterator &iterator,
-                                               std::vector<std::shared_ptr<Node> >::iterator &end,
-                                               float totalMainAxisSize,
-                                               size_t lineCount) {
+FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<Node *>::iterator &iterator,
+                                               std::vector<Node *>::iterator &end,
+                                               float totalMainAxisSize) {
     DEF_NODE_STYLE(container);
     DEF_NODE_LAYOUT(container);
 
@@ -284,7 +283,7 @@ FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<std::shared_ptr<Node>
     float totalCrossSize = 0;
 
     for (; iterator != end; ++iterator) {
-        auto child = iterator->get();
+        auto child = *iterator;
 
 
         DEF_NODE_STYLE(child);
@@ -355,7 +354,7 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
     // if (!isGrowing && !isShrinking) return;
 
     // Track which items are frozen (true = frozen, false = still flexible)
-    std::vector<bool> frozen(line.flexItems.size(), false);
+    std::vector frozen(line.flexItems.size(), false);
 
     // Store the original (hypothetical) flex basis so we can reset between passes
     std::vector<float> baseSizes(line.flexItems.size());
@@ -370,6 +369,14 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
             frozen[i] = true;
         }
     }
+
+    // Transform container gap/style logic out of the loop
+    DEF_NODE_STYLE(container);
+    DEF_NODE_LAYOUT(container);
+    auto &gap = containerStyle.flex().gap;
+    float gapSize = isRow
+                        ? gap.column.resolveValue(containerLayout.computedWidth)
+                        : gap.row.resolveValue(containerLayout.computedHeight);
 
     // Iterative loop – re-runs until no new violations
     for (;;) {
@@ -392,13 +399,6 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
         for (size_t i = 0; i < line.flexItems.size(); i++) {
             if (!frozen[i]) freeSpace -= baseSizes[i];
         }
-
-        DEF_NODE_STYLE(container);
-        DEF_NODE_LAYOUT(container);
-        auto &gap = containerStyle.flex().gap;
-        float gapSize = isRow
-                            ? gap.column.resolveValue(containerLayout.computedWidth)
-                            : gap.row.resolveValue(containerLayout.computedHeight);
 
         if (line.flexItems.size() > 1) {
             freeSpace -= (line.flexItems.size() - 1) * gapSize;
