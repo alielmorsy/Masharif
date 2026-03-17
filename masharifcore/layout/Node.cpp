@@ -198,11 +198,8 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
     if (height.unit == CSSUnit::PX) {
         computedHeight = height.value;
     } else if (height.unit == CSSUnit::PERCENT) {
-        if (_parent) {
-            auto &parentHeight = _parent->style().dimensions().height;
-            if (height.unit != CSSUnit::AUTO) {
-                computedHeight = availableHeight * (parentHeight / 100.0f);
-            }
+        if (!std::isnan(availableHeight)) {
+            computedHeight = availableHeight * (height.value / 100.0f);
         }
     }
     if (!std::isnan(computedHeight)) {
