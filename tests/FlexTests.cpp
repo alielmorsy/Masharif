@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "masharifcore/Masharif.h"
+#include <iostream>
+#include <iomanip>
 
 using namespace masharif;
 
@@ -240,6 +242,123 @@ TEST(FlexTests, flex_grow_block_relayout_is_frame_stable) {
         EXPECT_FLOAT_EQ(220.0f, leaf->layout().computedX) << "frame " << frame;
         EXPECT_FLOAT_EQ(804.0f, tile->layout().computedWidth) << "frame " << frame;
     }
+}
+
+// Full reproduction of the examples/opengl_demo dashboard skeleton (bad.png):
+// the content area overflows the window on BOTH axes. This asserts that every
+// box in the deep, padded, gap-spaced, multi-grow nesting stays inside the
+// 1024x768 surface. If this fails, the overflow is an engine bug and the
+// failing numbers point at which level loses the constraint.
+namespace {
+using NodePtr = std::shared_ptr<Node>;
+
+NodePtr block() { return std::make_shared<Node>(); }                 // OuterDisplay::Block
+NodePtr flexRow() {
+    auto n = std::make_shared<Node>();
+    n->setDisplay(OuterDisplay::Flex);
+    n->style().modify<CSSFlex>().direction = FlexDirection::Row;
+    return n;
+}
+NodePtr flexCol() {
+    auto n = std::make_shared<Node>();
+    n->setDisplay(OuterDisplay::Flex);
+    n->style().modify<CSSFlex>().direction = FlexDirection::Column;
+    return n;
+}
+void setSize(const NodePtr &n, CSSValue w, CSSValue h) {
+    n->style().modify<Dimensions>().width = w;
+    n->style().modify<Dimensions>().height = h;
+}
+void setGrow(const NodePtr &n, float g) { n->style().modify<CSSFlex>().flexGrow = g; }
+void setPadding(const NodePtr &n, float all) {
+    auto &p = n->style().modify<PaddingEdge>();
+    p.top = p.right = p.bottom = p.left = CSSValue(all);
+}
+const CSSValue pct100{100.0f, CSSUnit::PERCENT};
+} // namespace
+
+TEST(FlexTests, dashboard_skeleton_stays_within_surface) {
+    // root Box (Block, fills surface)
+    auto root = block();
+    setSize(root, pct100, pct100);
+
+    // Row[ sidebar(fixed 220), content(Expanded) ], cross = stretch
+    auto row = flexRow();
+    setSize(row, pct100, pct100);
+    root->addChild(row);
+
+    auto sidebar = block();
+    setSize(sidebar, CSSValue(220.0f), pct100);
+    row->addChild(sidebar);
+
+    auto content = block();                 // Expanded
+    setGrow(content, 1.0f);
+    row->addChild(content);
+
+    // content > Column(100%/100%) > [ header(h=68), area(Expanded) ]
+    auto ccol = flexCol();
+    setSize(ccol, pct100, pct100);
+    content->addChild(ccol);
+
+    auto header = block();
+    setSize(header, pct100, CSSValue(68.0f));
+    ccol->addChild(header);
+
+    auto area = block();                    // Expanded
+    setGrow(area, 1.0f);
+    ccol->addChild(area);
+
+    // area > Column(100%/100%, padding 28, gap 28) > [ statRow(h=104), lower(Expanded) ]
+    auto acol = flexCol();
+    setSize(acol, pct100, pct100);
+    setPadding(acol, 28.0f);
+    acol->style().modify<CSSFlex>().gap.row = CSSValue(28.0f);
+    area->addChild(acol);
+
+    auto statRow = flexRow();
+    setSize(statRow, pct100, CSSValue(104.0f));
+    statRow->style().modify<CSSFlex>().gap.column = CSSValue(28.0f);
+    acol->addChild(statRow);
+
+    NodePtr tiles[3];
+    for (auto &t : tiles) { t = block(); setGrow(t, 1.0f); statRow->addChild(t); }
+
+    auto lower = block();                   // Expanded
+    setGrow(lower, 1.0f);
+    acol->addChild(lower);
+
+    // lower > Row(100%/100%, gap 28) > [ chart(grow 62), activity(grow 38) ]
+    auto lrow = flexRow();
+    setSize(lrow, pct100, pct100);
+    lrow->style().modify<CSSFlex>().gap.column = CSSValue(28.0f);
+    lower->addChild(lrow);
+
+    auto chart = block();    setGrow(chart, 62.0f);    lrow->addChild(chart);
+    auto activity = block(); setGrow(activity, 38.0f);  lrow->addChild(activity);
+
+    root->calculate(1024, 768);
+
+    auto rightEdge  = [](const NodePtr &n) { return n->layout().computedX + n->layout().computedWidth; };
+    auto bottomEdge = [](const NodePtr &n) { return n->layout().computedY + n->layout().computedHeight; };
+
+    // Content area: 1024 - 220 = 804, anchored right after the sidebar.
+    EXPECT_FLOAT_EQ(804.0f, content->layout().computedWidth);
+    EXPECT_FLOAT_EQ(220.0f, content->layout().computedX);
+    EXPECT_FLOAT_EQ(804.0f, ccol->layout().computedWidth);
+    EXPECT_FLOAT_EQ(804.0f, area->layout().computedWidth);
+
+    // Nothing may cross the right or bottom edge of the 1024x768 surface.
+    for (auto &n : {content, ccol, header, area, acol, statRow, lower, lrow,
+                    tiles[0], tiles[1], tiles[2], chart, activity}) {
+        EXPECT_LE(rightEdge(n),  1024.0f + 0.5f) << "node overflows right edge";
+        EXPECT_LE(bottomEdge(n), 768.0f + 0.5f)  << "node overflows bottom edge";
+    }
+
+    // The three stat tiles share the padded row evenly: (804 - 56 - 56) / 3.
+    EXPECT_NEAR((804.0f - 56.0f - 56.0f) / 3.0f, tiles[0]->layout().computedWidth, 0.5f);
+    EXPECT_LE(rightEdge(tiles[2]), 996.0f + 0.5f);          // inside the 28px content padding
+    EXPECT_LE(rightEdge(activity), 996.0f + 0.5f);
+    EXPECT_LE(bottomEdge(chart),   740.0f + 0.5f);          // bars stay above the bottom padding
 }
 
 TEST(FlexTests, flex_wrap_wrap) {

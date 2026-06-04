@@ -46,6 +46,31 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
                          return a->style().flex().order < b->style().flex().order;
                      });
 
+    // Children resolve percentages / flex-basis and stretch against the
+    // container's CONTENT box (its border box minus its own padding+border), not
+    // the raw space handed down by the parent. Without this, a 100%-sized child of
+    // a padded flex container sizes to the full border box and overflows by the
+    // padding. computedWidth/Height are set by computeDimensions (border box) before
+    // this strategy runs; for AUTO-sized containers they are still a placeholder, so
+    // fall back to the parent-provided available space (existing shrink-to-fit path).
+    {
+        auto &cPad = containerStyle.padding();
+        auto &cBor = containerStyle.border();
+        const auto &cDim = containerStyle.dimensions();
+        const bool widthExplicit = (cDim.width.unit == CSSUnit::PX || cDim.width.unit == CSSUnit::PERCENT);
+        const bool heightExplicit = (cDim.height.unit == CSSUnit::PX || cDim.height.unit == CSSUnit::PERCENT);
+        if (widthExplicit && !std::isnan(containerLayout.computedWidth)) {
+            availableWidth = containerLayout.computedWidth
+                             - cPad.left.value - cPad.right.value
+                             - cBor.widthLeft.value - cBor.widthRight.value;
+        }
+        if (heightExplicit && !std::isnan(containerLayout.computedHeight)) {
+            availableHeight = containerLayout.computedHeight
+                              - cPad.top.value - cPad.bottom.value
+                              - cBor.widthTop.value - cBor.widthBottom.value;
+        }
+    }
+
     // 3. Compute flex basis for each inflow child
     for (auto &child: inFlowChildren) {
         float childAvailableWidth = availableWidth;
@@ -106,6 +131,11 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
             containerLayout.computedWidth = (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
         }
         availableWidth = containerLayout.computedWidth - paddingBorderRow;
+    } else if (isRow && containerStyle.dimensions().width.unit == CSSUnit::AUTO) {
+        // Width is the MAIN axis (Row) and is AUTO: shrink-to-fit content rather than
+        // filling the definite available width handed down by the parent.
+        containerLayout.computedWidth = totalMainAxisSize + paddingBorderRow;
+        availableWidth = containerLayout.computedWidth - paddingBorderRow;
     } else if (std::isnan(containerLayout.computedWidth)) {
         containerLayout.computedWidth = availableWidth;
     }
@@ -114,6 +144,13 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
             containerLayout.computedHeight = (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
         }
+        availableHeight = containerLayout.computedHeight - paddingBorderCol;
+    } else if (!isRow && containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
+        // Height is the MAIN axis (Column) and is AUTO: shrink-to-fit content rather
+        // than filling the definite available height handed down by the parent. This
+        // keeps e.g. bar columns at their content height so align-items:flex-end can
+        // bottom-align them on a common baseline.
+        containerLayout.computedHeight = totalMainAxisSize + paddingBorderCol;
         availableHeight = containerLayout.computedHeight - paddingBorderCol;
     } else if (std::isnan(containerLayout.computedHeight)) {
         containerLayout.computedHeight = availableHeight;

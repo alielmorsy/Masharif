@@ -229,12 +229,21 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
     float verticalPadding = stylePadding.top + stylePadding.bottom +
                             styleBorder.widthTop + styleBorder.widthBottom;
 
+    // An explicit PX/PERCENT size specifies the BORDER box (border-box sizing):
+    // padding and border inset the content rather than enlarging the element. The
+    // AUTO branches above instead produced a *content* size (fill = available
+    // minus padding/border, or shrink-to-fit content), so only those need padding
+    // and border re-added to reach the border box.
+    const bool widthIsExplicit = (width.unit == CSSUnit::PX || width.unit == CSSUnit::PERCENT);
+    const bool heightIsExplicit = (height.unit == CSSUnit::PX || height.unit == CSSUnit::PERCENT);
+
     if (!std::isnan(computedWidth)) {
         if (minWidth.unit != CSSUnit::AUTO)
             computedWidth = std::max(computedWidth, minWidth.resolveValue(availableWidth));
         if (maxWidth.unit != CSSUnit::AUTO)
             computedWidth = std::min(computedWidth, maxWidth.resolveValue(availableWidth));
-        computedWidth += horizontalPadding;
+        if (!widthIsExplicit)
+            computedWidth += horizontalPadding;
     }
 
 
@@ -250,7 +259,8 @@ void Node::computeDimensions(float availableWidth, float availableHeight) {
             computedHeight = std::max(computedHeight, minHeight.resolveValue(availableHeight));
         if (maxHeight.unit != CSSUnit::AUTO)
             computedHeight = std::min(computedHeight, maxHeight.resolveValue(availableHeight));
-        computedHeight += verticalPadding;
+        if (!heightIsExplicit)
+            computedHeight += verticalPadding;
     }
 
     _layout.computedWidth = computedWidth;
