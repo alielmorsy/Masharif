@@ -33,7 +33,12 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
         child->layoutImpl(availableWidth, availableHeight);
 
         auto display = childStyle.dimensions().display;
-        if (display == OuterDisplay::Block) {
+        // Flex (and Block) generate block-level boxes in normal flow; InlineFlex
+        // (and InlineBlock) generate inline-level boxes. Without handling the flex
+        // variants here, a flex child of a block container never gets its
+        // position assigned — leaving it to accumulate offsets in
+        // startUpdatingPositions() (manifests as content drifting every frame).
+        if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
             if (!currentLine.empty()) {
                 layoutLine(currentLine, currentY);
                 currentY += lineHeight;
@@ -46,8 +51,8 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
             childLayout.computedY = currentY + containerPadding.top.value + containerBorder.widthTop.value;
             currentY += childLayout.computedHeight + childMargin.top.value + childMargin.bottom.value;
         }
-        // Handle inline-block elements
-        else if (display == OuterDisplay::InlineBlock) {
+        // Handle inline-level elements (inline-block / inline-flex)
+        else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {
             float childWidth = childLayout.computedWidth + childMargin.left.value + childMargin.right.value;
 
             // Wrap to a new line if necessary

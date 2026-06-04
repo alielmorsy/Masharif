@@ -138,6 +138,49 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
     _style.dirty = false;
 }
 
+void Node::markSubtreeDirtyForRelayout() {
+    _style.dirty = true;
+    for (auto &child: children) {
+        child->markSubtreeDirtyForRelayout();
+    }
+}
+
+void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxHeight) {
+    if (_style.dimensions().display == OuterDisplay::None) return;
+    if (children.empty()) return;                       // leaf: nothing to re-lay-out
+    if (std::isnan(borderBoxWidth) || std::isnan(borderBoxHeight)) return;
+
+    // Adopt the size decided by the flex parent (main axis) and updateCrossSize
+    // (cross axis). These are border-box values.
+    _layout.computedWidth = borderBoxWidth;
+    _layout.computedHeight = borderBoxHeight;
+
+    // Convert border-box -> content-box for the available space handed to the
+    // strategy. computeDimensions uses content-box semantics (it re-adds
+    // padding+border), so subtract them here exactly once. Mirrors the
+    // horizontal/vertical padding sums in computeDimensions().
+    auto &padding = _style.padding();
+    auto &border = _style.border();
+    float horizontal = padding.left + padding.right + border.widthLeft + border.widthRight;
+    float vertical = padding.top + padding.bottom + border.widthTop + border.widthBottom;
+    float contentWidth = std::max(0.0f, borderBoxWidth - horizontal);
+    float contentHeight = std::max(0.0f, borderBoxHeight - vertical);
+
+    // Defeat the _style.dirty no-op gate so the subtree actually recomputes.
+    markSubtreeDirtyForRelayout();
+
+    // Drive the strategy DIRECTLY rather than via layoutImpl: layoutImpl would
+    // re-apply the Block AUTO-height override (see below), discarding the
+    // stretched/grown size we just adopted.
+    layoutStrategy->layout(contentWidth, contentHeight);
+
+    // Re-assert the definite border box (a flex strategy may rewrite it from the
+    // content-box available size; guard against rounding drift).
+    _layout.computedWidth = borderBoxWidth;
+    _layout.computedHeight = borderBoxHeight;
+    _style.dirty = false;
+}
+
 void Node::computeDimensions(float availableWidth, float availableHeight) {
     auto &dimensions = _style.dimensions();
     auto &width = dimensions.width;

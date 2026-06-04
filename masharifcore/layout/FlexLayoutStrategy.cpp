@@ -258,6 +258,26 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
     }
 
     updateCrossSize(lines);
+
+    // Each in-flow item now has a definite border-box: its main size from the
+    // positioning loop above and its cross size from updateCrossSize. During the
+    // flex-basis phase, AUTO-size items were measured against NaN and collapsed
+    // their subtrees to 0 (see Node::computeDimensions). Re-lay-out each item's
+    // subtree at its final size so grown/stretched descendants render correctly.
+    for (auto &line: lines) {
+        for (auto child: line.flexItems) {
+            DEF_NODE_STYLE(child);
+            const auto &childDim = childStyle.dimensions();
+            if (childDim.display == OuterDisplay::None) continue;
+            if (childDim.position != PositionType::Static &&
+                childDim.position != PositionType::Relative) {
+                continue;
+            }
+            DEF_NODE_LAYOUT(child);
+            child->layoutContentsWithDefiniteSize(childLayout.computedWidth,
+                                                  childLayout.computedHeight);
+        }
+    }
 }
 
 
