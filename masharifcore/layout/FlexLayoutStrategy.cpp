@@ -136,9 +136,12 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
             containerLayout.computedWidth = (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
         }
         availableWidth = containerLayout.computedWidth - paddingBorderRow;
-    } else if (isRow && containerStyle.dimensions().width.unit == CSSUnit::AUTO) {
+    } else if (isRow && containerStyle.dimensions().width.unit == CSSUnit::AUTO
+               && !container->mainSizeIsDefinite()) {
         // Width is the MAIN axis (Row) and is AUTO: shrink-to-fit content rather than
-        // filling the definite available width handed down by the parent.
+        // filling the definite available width handed down by the parent. Skipped when the
+        // parent already resolved this node's width (definite-size re-layout) — otherwise a
+        // cross-stretched Row of flex-grow children would re-collapse to its 0 flex-basis.
         containerLayout.computedWidth = totalMainAxisSize + paddingBorderRow;
         availableWidth = containerLayout.computedWidth - paddingBorderRow;
     } else if (std::isnan(containerLayout.computedWidth)) {
@@ -150,11 +153,13 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
             containerLayout.computedHeight = (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
         }
         availableHeight = containerLayout.computedHeight - paddingBorderCol;
-    } else if (!isRow && containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
+    } else if (!isRow && containerStyle.dimensions().height.unit == CSSUnit::AUTO
+               && !container->mainSizeIsDefinite()) {
         // Height is the MAIN axis (Column) and is AUTO: shrink-to-fit content rather
         // than filling the definite available height handed down by the parent. This
         // keeps e.g. bar columns at their content height so align-items:flex-end can
-        // bottom-align them on a common baseline.
+        // bottom-align them on a common baseline. Skipped in the definite-size re-layout
+        // (parent already resolved the height) so a cross-stretched Column fills it.
         containerLayout.computedHeight = totalMainAxisSize + paddingBorderCol;
         availableHeight = containerLayout.computedHeight - paddingBorderCol;
     } else if (std::isnan(containerLayout.computedHeight)) {

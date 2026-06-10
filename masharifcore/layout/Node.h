@@ -93,6 +93,13 @@ namespace masharif {
         // re-laid-out. The upward counterpart to markSubtreeDirtyForRelayout.
         void markDirtyToRoot();
 
+        // True only while layoutContentsWithDefiniteSize drives the strategy: the parent
+        // has already resolved this node's border box (main = flex-basis/grow, cross =
+        // stretch), so the flex strategy must NOT re-derive an AUTO main-axis size by
+        // shrink-to-fit — doing so re-collapses a cross-stretched container (e.g. a Row of
+        // flex-grow children) back to its 0 flex-basis and starves the grow distribution.
+        [[nodiscard]] bool mainSizeIsDefinite() const { return _mainSizeDefinite; }
+
     private:
         // Force this node and every descendant dirty so a relayout actually
         // re-runs (layoutImpl/strategies are gated on _style.dirty).
@@ -106,6 +113,10 @@ namespace masharif {
         // on every ancestor of a changed node; a node with neither _style.dirty nor
         // _descendantDirty (and unchanged available space) can reuse its cached layout.
         bool _descendantDirty = false;
+
+        // Set by layoutContentsWithDefiniteSize for the duration of its strategy call; see
+        // mainSizeIsDefinite().
+        bool _mainSizeDefinite = false;
 
         // Memo of the inputs the last solve ran against, so a clean subtree is only
         // re-solved when the space it is measured against actually changes. NAN means

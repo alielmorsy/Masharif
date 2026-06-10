@@ -222,8 +222,12 @@ void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxH
 
     // Drive the strategy DIRECTLY rather than via layoutImpl: layoutImpl would
     // re-apply the Block AUTO-height override (see below), discarding the
-    // stretched/grown size we just adopted.
+    // stretched/grown size we just adopted. The definite flag tells the flex strategy
+    // to fill this resolved size instead of shrink-wrapping an AUTO main axis (which
+    // would re-collapse a cross-stretched grow container).
+    _mainSizeDefinite = true;
     layoutStrategy->layout(contentWidth, contentHeight);
+    _mainSizeDefinite = false;
 
     // Re-assert the definite border box (a flex strategy may rewrite it from the
     // content-box available size; guard against rounding drift).
