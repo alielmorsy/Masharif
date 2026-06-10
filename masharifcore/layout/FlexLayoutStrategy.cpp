@@ -80,7 +80,11 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         if (isRow && dim.width.unit == CSSUnit::AUTO) childAvailableWidth = std::numeric_limits<float>::quiet_NaN();
         if (!isRow && dim.height.unit == CSSUnit::AUTO) childAvailableHeight = std::numeric_limits<float>::quiet_NaN();
 
-        // Temporarily disable min/max constraints to get pure content size for flex basis
+        // Temporarily disable min/max constraints to get pure content size for flex basis.
+        // modify<>() sets the child dirty as a side effect; snapshot the flag first and
+        // restore it before layoutImpl so a clean child can still take its reuse early-out
+        // (this measurement must not count as a change to the child).
+        const bool savedDirty = child->style().dirty;
         auto &childDims = child->style().modify<Dimensions>();
         auto savedMinWidth = childDims.minWidth;
         auto savedMinHeight = childDims.minHeight;
@@ -92,6 +96,7 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         childDims.maxWidth = {};
         childDims.maxHeight = {};
 
+        child->style().dirty = savedDirty;
         child->layoutImpl(childAvailableWidth, childAvailableHeight);
 
         // Restore constraints
@@ -273,14 +278,14 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
             }
 
             if (isRow) {
-                childLayout.computedY = crossPos;
-                childLayout.computedX = isReverse
+                childLayout.localY = crossPos;
+                childLayout.localX = isReverse
                                             ? currentPosition - childLayout.computedFlexBasis - marginEnd
                                             : currentPosition + marginStart;
                 childLayout.computedWidth = childLayout.computedFlexBasis;
             } else {
-                childLayout.computedX = crossPos;
-                childLayout.computedY = isReverse
+                childLayout.localX = crossPos;
+                childLayout.localY = isReverse
                                             ? currentPosition - childLayout.computedFlexBasis - marginEnd
                                             : currentPosition + marginStart;
                 childLayout.computedHeight = childLayout.computedFlexBasis;
@@ -686,9 +691,9 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
             }
 
             if (isRow) {
-                childLayout.computedY = itemCrossPos;
+                childLayout.localY = itemCrossPos;
             } else {
-                childLayout.computedX = itemCrossPos;
+                childLayout.localX = itemCrossPos;
             }
         }
 

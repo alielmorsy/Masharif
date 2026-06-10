@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <memory>
 #include <masharifcore/structure/Style.h>
 
@@ -86,6 +87,12 @@ namespace masharif {
 
         void removeChild(SharedNode &child);
 
+        // Mark this node dirty and flag every ancestor as having a dirty descendant,
+        // up to the root. Required because layoutImpl only inspects DIRECT children's
+        // dirty state, so without this a deep change would be stranded and never
+        // re-laid-out. The upward counterpart to markSubtreeDirtyForRelayout.
+        void markDirtyToRoot();
+
     private:
         // Force this node and every descendant dirty so a relayout actually
         // re-runs (layoutImpl/strategies are gated on _style.dirty).
@@ -94,5 +101,16 @@ namespace masharif {
         Node *_parent = nullptr;
         Style _style{};
         Layout _layout{};
+
+        // Precise incremental-layout state. _descendantDirty is set by markDirtyToRoot
+        // on every ancestor of a changed node; a node with neither _style.dirty nor
+        // _descendantDirty (and unchanged available space) can reuse its cached layout.
+        bool _descendantDirty = false;
+
+        // Memo of the inputs the last solve ran against, so a clean subtree is only
+        // re-solved when the space it is measured against actually changes. NAN means
+        // "never laid out", which forces the first solve (the node also starts dirty).
+        float _lastAvailW = NAN, _lastAvailH = NAN;   ///< layoutImpl available space
+        float _lastDefW   = NAN, _lastDefH   = NAN;   ///< layoutContentsWithDefiniteSize size
     };
 }

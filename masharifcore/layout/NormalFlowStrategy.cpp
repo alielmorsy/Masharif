@@ -47,8 +47,8 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
                 lineHeight = 0.0f;
             }
 
-            childLayout.computedX = containerPadding.left.value + containerBorder.widthLeft.value;
-            childLayout.computedY = currentY + containerPadding.top.value + containerBorder.widthTop.value;
+            childLayout.localX = containerPadding.left.value + containerBorder.widthLeft.value;
+            childLayout.localY = currentY + containerPadding.top.value + containerBorder.widthTop.value;
             currentY += childLayout.computedHeight + childMargin.top.value + childMargin.bottom.value;
         }
         // Handle inline-level elements (inline-block / inline-flex)
@@ -85,8 +85,8 @@ void NormalFlowStrategy::layoutLine(std::vector<Node*> &line, float y) {
     for (auto &child: line) {
         DEF_NODE_LAYOUT(child);
         DEF_NODE_STYLE(child);
-        childLayout.computedX = x;
-        childLayout.computedY = y;
+        childLayout.localX = x;
+        childLayout.localY = y;
         x += childLayout.computedWidth + childStyle.margin().left.value + childStyle.margin().right.value;
     }
 }

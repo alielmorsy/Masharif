@@ -9,11 +9,25 @@
 
 using namespace masharif;
 
+// Treat NaN as equal to NaN so the layout memo recognises an unchanged AUTO
+// placeholder size (NaN) as a cache hit rather than a perpetual miss.
+static bool SameSize(float a, float b) {
+    if (std::isnan(a) && std::isnan(b)) return true;
+    return a == b;
+}
+
 void Node::removeChild(SharedNode &child) {
     auto it = std::find(children.begin(), children.end(), child);
     if (it != children.end()) {
         children.erase(it);
         _style.dirty = true;
+    }
+}
+
+void Node::markDirtyToRoot() {
+    _style.dirty = true;
+    for (Node *p = _parent; p && !p->_descendantDirty; p = p->_parent) {
+        p->_descendantDirty = true;
     }
 }
 
@@ -30,8 +44,14 @@ static Node *findRelativeParent(Node *child) {
 }
 
 void Node::startUpdatingPositions() {
-    auto computedX = _layout.computedX;
-    auto computedY = _layout.computedY;
+    // End-of-frame: this node's layout (and that of everything below it) is now
+    // committed, so clear the dirty channels here rather than in layoutImpl. Clearing
+    // mid-solve would hide a subtree's change from the later definite-size pass.
+    _style.dirty = false;
+    _descendantDirty = false;
+
+    const float absX = _layout.computedX;
+    const float absY = _layout.computedY;
     for (auto &child: children) {
         auto &position = child->style().dimensions().position;
         if (position != PositionType::Static &&
@@ -40,8 +60,11 @@ void Node::startUpdatingPositions() {
             continue;
         }
         DEF_NODE_LAYOUT(child);
-        childLayout.computedX += computedX;
-        childLayout.computedY += computedY;
+        // Derive the absolute position from the stable local position instead of
+        // accumulating in place. This is idempotent, so a clean subtree whose re-solve
+        // was skipped still lands at the right absolute coordinates when an ancestor moves.
+        childLayout.computedX = absX + childLayout.localX;
+        childLayout.computedY = absY + childLayout.localY;
 
         child->startUpdatingPositions();
         child->positionOutOfFlowChildren();
@@ -86,6 +109,10 @@ void Node::positionOutOfFlowChildren() {
 
 void Node::calculate(float availableWidth, float availableHeight) {
     layoutImpl(availableWidth, availableHeight);
+    // The root's local origin is its absolute origin (no parent to offset against);
+    // startUpdatingPositions then derives every descendant's absolute position from it.
+    _layout.computedX = _layout.localX;
+    _layout.computedY = _layout.localY;
     startUpdatingPositions();
 }
 
@@ -94,48 +121,59 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
         _layout.computedWidth = _layout.computedHeight = 0.0f;
         return;
     }
-    if (_style.dirty)
+
+    const bool spaceSame = SameSize(availableWidth, _lastAvailW) &&
+                           SameSize(availableHeight, _lastAvailH);
+
+    // A directly-dirtied child still forces a re-solve even without an explicit
+    // markDirtyToRoot call, preserving the engine's standalone contract (set a
+    // child dirty, call calculate). markDirtyToRoot covers the deep case.
+    bool anyDirectChildDirty = false;
+    for (const auto &child: children) {
+        if (child->_style.dirty) { anyDirectChildDirty = true; break; }
+    }
+
+    // Full reuse: nothing in this subtree changed and the available space is identical
+    // to the last solve, so the cached _layout (incl. computedFlexBasis and local
+    // positions) is still valid. dirty is cleared at end of frame, not here.
+    if (spaceSame && !_style.dirty && !_descendantDirty && !anyDirectChildDirty)
+        return;
+
+    _lastAvailW = availableWidth;
+    _lastAvailH = availableHeight;
+
+    if (_style.dirty || !spaceSame)
         computeDimensions(availableWidth, availableHeight);
-    bool isAnyChildDirty = _style.dirty;
-    if (!isAnyChildDirty) {
+
+    layoutStrategy->layout(availableWidth, availableHeight);
+    if (auto &position = _style.dimensions().position; position == PositionType::Relative) {
+        auto &offset = _style.offsets();
+        _layout.localX += offset.left.resolveValue(availableWidth) - offset.right.resolveValue(availableWidth);
+        _layout.localY += offset.top.resolveValue(availableHeight) - offset.bottom.resolveValue(availableHeight);
+    }
+    auto &containerStyle = _style;
+    // Only override height for Block/InlineBlock. Flex layout handles its own height.
+    auto display = containerStyle.dimensions().display;
+    bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
+
+    if (isBlock && containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
+        float maxChildBottom = 0.0f;
         for (const auto &child: children) {
-            isAnyChildDirty = isAnyChildDirty | child->_style.dirty;
-        }
-    }
-
-    if (isAnyChildDirty) {
-        layoutStrategy->layout(availableWidth, availableHeight);
-        if (auto &position = _style.dimensions().position; position == PositionType::Relative) {
-            auto &offset = _style.offsets();
-            _layout.computedX += offset.left.resolveValue(availableWidth) - offset.right.resolveValue(availableWidth);
-            _layout.computedY += offset.top.resolveValue(availableHeight) - offset.bottom.resolveValue(availableHeight);
-        }
-        auto &containerStyle = _style;
-        // Only override height for Block/InlineBlock. Flex layout handles its own height.
-        auto display = containerStyle.dimensions().display;
-        bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
-
-        if (isBlock && containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
-            float maxChildBottom = 0.0f;
-            for (const auto &child: children) {
-                DEF_NODE_LAYOUT(child);
-                DEF_NODE_STYLE(child);
-                const auto position = childStyle.dimensions().position;
-                auto &childMargin = childStyle.margin();
-                if (position == PositionType::Static || position == PositionType::Relative) {
-                    maxChildBottom = std::max(maxChildBottom,
-                                              childLayout.computedY + childLayout.computedHeight + childMargin.bottom + childMargin.top);
-                }
+            DEF_NODE_LAYOUT(child);
+            DEF_NODE_STYLE(child);
+            const auto position = childStyle.dimensions().position;
+            auto &childMargin = childStyle.margin();
+            if (position == PositionType::Static || position == PositionType::Relative) {
+                maxChildBottom = std::max(maxChildBottom,
+                                          childLayout.localY + childLayout.computedHeight + childMargin.bottom + childMargin.top);
             }
-
-            auto &border = containerStyle.border();
-            _layout.computedHeight = maxChildBottom + _style.padding().top + _style.padding().bottom
-                                     +
-                                     border.widthTop + border.widthBottom;
         }
-    }
 
-    _style.dirty = false;
+        auto &border = containerStyle.border();
+        _layout.computedHeight = maxChildBottom + _style.padding().top + _style.padding().bottom
+                                 +
+                                 border.widthTop + border.widthBottom;
+    }
 }
 
 void Node::markSubtreeDirtyForRelayout() {
@@ -155,6 +193,22 @@ void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxH
     _layout.computedWidth = borderBoxWidth;
     _layout.computedHeight = borderBoxHeight;
 
+    // Reuse the cached subtree layout when nothing in this subtree changed and the
+    // definite size matches the last definite-size pass. This replaces the old
+    // unconditional markSubtreeDirtyForRelayout(), which re-solved every subtree on
+    // every frame and defeated all caching. When the size differs (e.g. an AUTO child
+    // collapsed against NaN during the flex-basis phase) the layoutImpl memo below
+    // misses on the space change and re-expands the subtree, so no force-dirty needed.
+    bool anyDirectChildDirty = false;
+    for (const auto &child: children) {
+        if (child->_style.dirty) { anyDirectChildDirty = true; break; }
+    }
+    if (!_style.dirty && !_descendantDirty && !anyDirectChildDirty &&
+        SameSize(borderBoxWidth, _lastDefW) && SameSize(borderBoxHeight, _lastDefH))
+        return;
+    _lastDefW = borderBoxWidth;
+    _lastDefH = borderBoxHeight;
+
     // Convert border-box -> content-box for the available space handed to the
     // strategy. computeDimensions uses content-box semantics (it re-adds
     // padding+border), so subtract them here exactly once. Mirrors the
@@ -166,9 +220,6 @@ void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxH
     float contentWidth = std::max(0.0f, borderBoxWidth - horizontal);
     float contentHeight = std::max(0.0f, borderBoxHeight - vertical);
 
-    // Defeat the _style.dirty no-op gate so the subtree actually recomputes.
-    markSubtreeDirtyForRelayout();
-
     // Drive the strategy DIRECTLY rather than via layoutImpl: layoutImpl would
     // re-apply the Block AUTO-height override (see below), discarding the
     // stretched/grown size we just adopted.
@@ -178,7 +229,6 @@ void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxH
     // content-box available size; guard against rounding drift).
     _layout.computedWidth = borderBoxWidth;
     _layout.computedHeight = borderBoxHeight;
-    _style.dirty = false;
 }
 
 void Node::computeDimensions(float availableWidth, float availableHeight) {
