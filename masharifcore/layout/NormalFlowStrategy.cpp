@@ -1,12 +1,7 @@
-//
-// Created by Ali Elmorsy on 3/25/2025.
-//
-
 #include "NormalFlowStrategy.h"
 
 #include "Node.h"
 using namespace masharif;
-
 
 void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
     float currentX = 0.0f;
@@ -16,7 +11,7 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
     DEF_NODE_LAYOUT(container);
     DEF_NODE_STYLE(container);
     auto &containerBorder = containerStyle.border();
-    auto containerPadding = container->style().padding();
+    const auto &containerPadding = containerStyle.padding();
     for (const auto &child: container->children) {
         DEF_NODE_STYLE(child);
 
@@ -24,7 +19,7 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
         if (position != PositionType::Static &&
             position != PositionType::Relative) {
             container->outOfFlowChildren.push_back(child);
-            continue; // Skip non-static/relative positioned elements
+            continue;
         }
         DEF_NODE_LAYOUT(child);
         auto &childMargin = childStyle.margin();
@@ -33,11 +28,8 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
         child->layoutImpl(availableWidth, availableHeight);
 
         auto display = childStyle.dimensions().display;
-        // Flex (and Block) generate block-level boxes in normal flow; InlineFlex
-        // (and InlineBlock) generate inline-level boxes. Without handling the flex
-        // variants here, a flex child of a block container never gets its
-        // position assigned — leaving it to accumulate offsets in
-        // startUpdatingPositions() (manifests as content drifting every frame).
+        // Block/Flex are block-level; InlineBlock/InlineFlex are inline-level. The flex variants
+        // must be handled here or a flex child never gets positioned (content drifts every frame).
         if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
             if (!currentLine.empty()) {
                 layoutLine(currentLine, currentY);
@@ -76,12 +68,10 @@ void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
     if (!currentLine.empty()) {
         layoutLine(currentLine, currentY);
     }
-
-
 }
 
 void NormalFlowStrategy::layoutLine(std::vector<Node*> &line, float y) {
-    float x = 0.0f; // Simple left alignment
+    float x = 0.0f; // simple left alignment
     for (auto &child: line) {
         DEF_NODE_LAYOUT(child);
         DEF_NODE_STYLE(child);

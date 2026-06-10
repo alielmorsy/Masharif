@@ -1,5 +1,4 @@
-#ifndef STYLE_H
-#define STYLE_H
+#pragma once
 
 #include "Border.h"
 #include "Dimension.h"
@@ -80,7 +79,4 @@ namespace masharif {
         BorderProperties m_borderProps;
         Dimensions m_dimensions;
     };
-};
-
-
-#endif
+}

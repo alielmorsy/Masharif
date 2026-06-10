@@ -28,7 +28,7 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
     const bool isRow = containerStyle.flex().isRow();
     const bool isReverse = containerStyle.flex().isReverse();
 
-    // 1. Separate out-of-flow children and build in-flow list
+    // Separate out-of-flow children and build the in-flow list.
     std::vector<Node *> inFlowChildren;
     inFlowChildren.reserve(children.size());
     for (auto &child: children) {
@@ -40,19 +40,15 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         }
     }
 
-    // 2. Sort by CSS order property (stable to preserve DOM order for equal values)
+    // Stable sort by CSS order, preserving DOM order for equal values.
     std::stable_sort(inFlowChildren.begin(), inFlowChildren.end(),
                      [](Node *a, Node *b) {
                          return a->style().flex().order < b->style().flex().order;
                      });
 
-    // Children resolve percentages / flex-basis and stretch against the
-    // container's CONTENT box (its border box minus its own padding+border), not
-    // the raw space handed down by the parent. Without this, a 100%-sized child of
-    // a padded flex container sizes to the full border box and overflows by the
-    // padding. computedWidth/Height are set by computeDimensions (border box) before
-    // this strategy runs; for AUTO-sized containers they are still a placeholder, so
-    // fall back to the parent-provided available space (existing shrink-to-fit path).
+    // Children size against the container's CONTENT box (border box minus its own
+    // padding+border), so a 100%-sized child of a padded container doesn't overflow. AUTO-sized
+    // containers have no definite box yet, so they keep the parent-provided available space.
     {
         auto &cPad = containerStyle.padding();
         auto &cBor = containerStyle.border();
@@ -71,7 +67,7 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         }
     }
 
-    // 3. Compute flex basis for each inflow child
+    // Compute the flex basis of each in-flow child.
     for (auto &child: inFlowChildren) {
         float childAvailableWidth = availableWidth;
         float childAvailableHeight = availableHeight;
@@ -80,10 +76,8 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         if (isRow && dim.width.unit == CSSUnit::AUTO) childAvailableWidth = std::numeric_limits<float>::quiet_NaN();
         if (!isRow && dim.height.unit == CSSUnit::AUTO) childAvailableHeight = std::numeric_limits<float>::quiet_NaN();
 
-        // Temporarily disable min/max constraints to get pure content size for flex basis.
-        // modify<>() sets the child dirty as a side effect; snapshot the flag first and
-        // restore it before layoutImpl so a clean child can still take its reuse early-out
-        // (this measurement must not count as a change to the child).
+        // Measure pure content size for the flex basis with min/max disabled. modify<>() dirties
+        // the child, so snapshot/restore the flag — this measurement must not count as a change.
         const bool savedDirty = child->style().dirty;
         auto &childDims = child->style().modify<Dimensions>();
         auto savedMinWidth = childDims.minWidth;
@@ -99,7 +93,6 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         child->style().dirty = savedDirty;
         child->layoutImpl(childAvailableWidth, childAvailableHeight);
 
-        // Restore constraints
         childDims.minWidth = savedMinWidth;
         childDims.minHeight = savedMinHeight;
         childDims.maxWidth = savedMaxWidth;
@@ -138,10 +131,8 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         availableWidth = containerLayout.computedWidth - paddingBorderRow;
     } else if (isRow && containerStyle.dimensions().width.unit == CSSUnit::AUTO
                && !container->mainSizeIsDefinite()) {
-        // Width is the MAIN axis (Row) and is AUTO: shrink-to-fit content rather than
-        // filling the definite available width handed down by the parent. Skipped when the
-        // parent already resolved this node's width (definite-size re-layout) — otherwise a
-        // cross-stretched Row of flex-grow children would re-collapse to its 0 flex-basis.
+        // AUTO main axis (Row): shrink-to-fit content instead of filling the parent's width.
+        // Skipped in the definite-size re-layout, else a cross-stretched grow Row re-collapses.
         containerLayout.computedWidth = totalMainAxisSize + paddingBorderRow;
         availableWidth = containerLayout.computedWidth - paddingBorderRow;
     } else if (std::isnan(containerLayout.computedWidth)) {
@@ -155,30 +146,25 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
         availableHeight = containerLayout.computedHeight - paddingBorderCol;
     } else if (!isRow && containerStyle.dimensions().height.unit == CSSUnit::AUTO
                && !container->mainSizeIsDefinite()) {
-        // Height is the MAIN axis (Column) and is AUTO: shrink-to-fit content rather
-        // than filling the definite available height handed down by the parent. This
-        // keeps e.g. bar columns at their content height so align-items:flex-end can
-        // bottom-align them on a common baseline. Skipped in the definite-size re-layout
-        // (parent already resolved the height) so a cross-stretched Column fills it.
+        // AUTO main axis (Column): shrink-to-fit content instead of filling the parent's height
+        // (keeps columns at content height for align-items:flex-end). Skipped in definite re-layout.
         containerLayout.computedHeight = totalMainAxisSize + paddingBorderCol;
         availableHeight = containerLayout.computedHeight - paddingBorderCol;
     } else if (std::isnan(containerLayout.computedHeight)) {
         containerLayout.computedHeight = availableHeight;
     }
 
-    // 4. Build flex lines from inFlowChildren
+    // Build flex lines, resolve each, then position its items.
     auto currentIterator = inFlowChildren.begin();
     auto end = inFlowChildren.end();
-    size_t lineCount = 0;
     float availableMainAxisSize = isRow ? availableWidth : availableHeight;
     float crossPos = isRow
                          ? containerStyle.padding().top.resolveValue(availableWidth)
                          : containerStyle.padding().left.resolveValue(availableWidth);
     std::vector<FlexLine> lines;
 
-    for (; currentIterator != end; lineCount++) {
-        FlexLine line = calculateFlexLine(currentIterator, end, availableMainAxisSize);
-        lines.push_back(line);
+    while (currentIterator != end) {
+        FlexLine &line = lines.emplace_back(calculateFlexLine(currentIterator, end, availableMainAxisSize));
 
         float containerMainSize = isRow ? containerLayout.computedWidth : containerLayout.computedHeight;
         auto &padding = containerStyle.padding();
@@ -190,21 +176,15 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
                                : padding.bottom.resolveValue(containerMainSize);
         float availableSpace = containerMainSize - paddingStart - paddingEnd;
 
-        // 5. Resolve flexible lengths (multi-pass, handles min/max violations)
         resolveFlexibleLengths(line, availableSpace, isRow, availableWidth, availableHeight);
 
-        // Recompute remaining space after flex resolution
+        // Recompute remaining space after flex resolution.
         float takenAfterResolve = 0;
         for (auto &child: line.flexItems) {
             takenAfterResolve += child->layout().computedFlexBasis;
         }
         float originalRemainingSpace = availableSpace - line.takenSize;
         float remainingSpace = availableSpace - takenAfterResolve;
-
-        // Handle auto margins consuming space
-        if (remainingSpace > 0 && line.numberOfAutoMargin > 0) {
-            // Auto margins will consume the space in the positioning loop below
-        }
 
         float gap = isRow
                         ? containerStyle.flex().gap.column.resolveValue(availableWidth)
@@ -328,6 +308,8 @@ void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
 }
 
 
+/// Greedily pack items into one flex line, advancing `iterator` until the next item would
+/// overflow `totalMainAxisSize` (when wrapping is enabled).
 FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<Node *>::iterator &iterator,
                                                std::vector<Node *>::iterator &end,
                                                float totalMainAxisSize) {
@@ -389,48 +371,37 @@ FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<Node *>::iterator &it
     }
 
     return {
-        std::move(items), // flexItems (std::vector<Node *>)
-        numberOfAutoMargin,
-        takenSize,
-        totalFlexGrow,
-        totalFlexShrinkScaledFactors,
-        totalCrossSize
+        .flexItems = std::move(items),
+        .numberOfAutoMargin = numberOfAutoMargin,
+        .takenSize = takenSize,
+        .totalFlexGrow = totalFlexGrow,
+        .totalFlexShrinkScaledFactors = totalFlexShrinkScaledFactors,
+        .crossSize = totalCrossSize
     };
 }
 
-// ── Multi-pass "Resolve Flexible Lengths" (W3C Flexbox §9.7) ──────────────
-//
-// The algorithm distributes free space proportionally and then checks each
-// item against its min/max constraints. If an item violates a constraint it
-// is "frozen" at the clamped size, and the loop restarts to redistribute the
-// leftover among the remaining unfrozen items.
-//
+/// Multi-pass "resolve flexible lengths" (W3C Flexbox §9.7): distribute free space
+/// proportionally, freeze items that violate min/max, and re-distribute among the rest.
 void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableSpace, bool isRow,
                                                 float availableWidth, float availableHeight) {
     if (line.flexItems.empty()) return;
 
     float remainingSpace = availableSpace - line.takenSize;
 
-    // Nothing to grow/shrink, or auto-margins will consume the space
+    // Auto margins consume the free space instead of grow/shrink.
     if (line.numberOfAutoMargin > 0) return;
 
     bool isGrowing = remainingSpace > 0 && line.totalFlexGrow > 0;
     bool isShrinking = remainingSpace < 0 && line.totalFlexShrinkScaledFactors != 0;
-    // We cannot return early here just because remainingSpace is 0, because
-    // min/max constraints might still need to be enforced (e.g. max-width < flex-basis).
-    // The loop infra handles the "do nothing" case via isGrowing/isShrinking flags.
-    // if (!isGrowing && !isShrinking) return;
+    // No early-out when remainingSpace == 0: min/max may still need enforcing (e.g. max < basis).
 
-    // Track which items are frozen (true = frozen, false = still flexible)
     std::vector frozen(line.flexItems.size(), false);
-
-    // Store the original (hypothetical) flex basis so we can reset between passes
-    std::vector<float> baseSizes(line.flexItems.size());
+    std::vector<float> baseSizes(line.flexItems.size());  ///< hypothetical basis, reset each pass
     for (size_t i = 0; i < line.flexItems.size(); i++) {
         baseSizes[i] = line.flexItems[i]->layout().computedFlexBasis;
     }
 
-    // Freeze zero-flex-factor items per W3C §9.7
+    // Freeze zero-flex-factor items per W3C §9.7.
     for (size_t i = 0; i < line.flexItems.size(); i++) {
         auto &s = line.flexItems[i]->style().flex();
         if ((isGrowing && s.flexGrow == 0) || (isShrinking && s.flexShrink == 0)) {
@@ -438,7 +409,6 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
         }
     }
 
-    // Transform container gap/style logic out of the loop
     DEF_NODE_STYLE(container);
     DEF_NODE_LAYOUT(container);
     auto &gap = containerStyle.flex().gap;
@@ -446,9 +416,9 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
                         ? gap.column.resolveValue(containerLayout.computedWidth)
                         : gap.row.resolveValue(containerLayout.computedHeight);
 
-    // Iterative loop – re-runs until no new violations
+    // Re-run until no item newly violates a min/max constraint.
     for (;;) {
-        // 1. Compute totals for unfrozen items only
+        // Totals over the still-unfrozen items.
         float unfrozenFlexGrow = 0;
         float unfrozenScaledShrink = 0;
         float frozenSize = 0;
@@ -472,7 +442,7 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
             freeSpace -= (line.flexItems.size() - 1) * gapSize;
         }
 
-        // 2. Distribute free space to unfrozen items
+        // Distribute free space to unfrozen items.
         for (size_t i = 0; i < line.flexItems.size(); i++) {
             if (frozen[i]) continue;
             auto *child = line.flexItems[i];
@@ -491,7 +461,7 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
             child->layout().computedFlexBasis = newSize;
         }
 
-        // 3. Check for min/max violations, freeze violators
+        // Clamp to min/max and freeze any violator.
         bool anyNewFreezes = false;
 
         for (size_t i = 0; i < line.flexItems.size(); i++) {
@@ -524,10 +494,7 @@ void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableS
             }
         }
 
-        // 4. If no violations occurred, freeze everything and exit
         if (!anyNewFreezes) break;
-
-        // Otherwise loop again to redistribute among the remaining unfrozen items
     }
 }
 
@@ -557,9 +524,7 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
     float crossOffset = paddingStart;
     float lineSpacing = 0;
 
-    // If there is only one line (e.g. nowrap, or just happens to fit), 
-    // and the container has a definite cross size, that single line should fill the container
-    // so that align-items: stretch works against the full container height.
+    // A single line fills the container's cross size so align-items:stretch works against it.
     if (lines.size() == 1) {
         float availableCross = containerCrossSize - paddingStart - paddingEnd;
         if (std::isnan(lines[0].crossSize) || lines[0].crossSize < availableCross) {
@@ -593,9 +558,7 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
             }
             break;
         case AlignContent::Stretch:
-            // Only distribute space if we have multiple lines (checked implicitly or expclitly in spec).
-            // Single line case handled above or by default fill if wrap is involved? 
-            // Actually, if we have multiple lines and stretch, they grow.
+            // With multiple lines, grow each to absorb the extra cross space.
             if (lines.size() > 1 && extraSpace > 0) {
                 float additionalSize = extraSpace / lines.size();
                 for (auto &line: lines) {
@@ -608,7 +571,6 @@ void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
     }
 
     for (auto &line: lines) {
-        // Calculate the line's cross start position considering wrap reverse
         float lineCrossStart = isReverse ? (containerCrossSize - crossOffset - line.crossSize) : crossOffset;
 
         for (auto child: line.flexItems) {

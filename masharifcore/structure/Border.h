@@ -1,9 +1,6 @@
-#ifndef BORDER_H
-#define BORDER_H
+#pragma once
 
 #include "CSSValue.h"
-
-
 
 namespace masharif {
     struct BorderProperties {
@@ -11,10 +8,5 @@ namespace masharif {
         CSSValue widthBottom{0};
         CSSValue widthLeft{0};
         CSSValue widthRight{0};
-
-
-
-
     };
 }
-#endif //BORDER_H

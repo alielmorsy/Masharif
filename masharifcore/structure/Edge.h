@@ -1,5 +1,5 @@
-#ifndef OFFSETS_H
-#define OFFSETS_H
+#pragma once
+
 #include "CSSValue.h"
 
 namespace masharif {
@@ -10,4 +10,3 @@ namespace masharif {
         CSSValue right{0, CSSUnit::PX};
     };
 }
-#endif

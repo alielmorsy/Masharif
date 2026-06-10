@@ -1,12 +1,6 @@
-//
-// Created by Ali Elmorsy on 3/25/2025.
-//
+#pragma once
 
-#ifndef DIMENSION_H
-#define DIMENSION_H
 #include "CSSValue.h"
-
-
 #include "BoxInfo.h"
 
 namespace masharif {
@@ -22,5 +16,3 @@ namespace masharif {
         PositionType position = PositionType::Static;
     };
 }
-
-#endif //DIMENSION_H

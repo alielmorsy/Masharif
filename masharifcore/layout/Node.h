@@ -37,11 +37,9 @@ namespace masharif {
 
         void layoutImpl(float availableWidth, float availableHeight);
 
-        // Re-lay-out this node's subtree against an already-resolved, definite
-        // border-box size (decided by a flex parent's main-axis resolution and
-        // updateCrossSize's cross-axis stretch). Needed because the flex-basis
-        // phase measures AUTO-size items against NaN and collapses their
-        // subtrees to 0; this drives them back out at the final size.
+        /// Re-lay-out this subtree at an already-resolved definite border-box size (set by the
+        /// flex parent's main-axis resolution + updateCrossSize's cross-axis stretch). Needed
+        /// because the flex-basis phase measures AUTO items against NaN and collapses them to 0.
         void layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxHeight);
 
         void computeDimensions(float availableWidth, float availableHeight);
@@ -87,55 +85,45 @@ namespace masharif {
 
         void removeChild(SharedNode &child);
 
-        // Mark this node dirty and flag every ancestor as having a dirty descendant,
-        // up to the root. Required because layoutImpl only inspects DIRECT children's
-        // dirty state, so without this a deep change would be stranded and never
-        // re-laid-out. The upward counterpart to markSubtreeDirtyForRelayout.
+        /// Mark this node dirty and flag every ancestor's _descendantDirty up to the root.
+        /// layoutImpl only inspects DIRECT children, so a deep change needs this to be seen.
         void markDirtyToRoot();
 
-        // True only while layoutContentsWithDefiniteSize drives the strategy: the parent
-        // has already resolved this node's border box (main = flex-basis/grow, cross =
-        // stretch), so the flex strategy must NOT re-derive an AUTO main-axis size by
-        // shrink-to-fit — doing so re-collapses a cross-stretched container (e.g. a Row of
-        // flex-grow children) back to its 0 flex-basis and starves the grow distribution.
+        /// True only while layoutContentsWithDefiniteSize drives the strategy: the parent has
+        /// resolved this node's border box, so the flex strategy must NOT shrink-to-fit an AUTO
+        /// main axis (that would re-collapse a cross-stretched grow container to its 0 basis).
         [[nodiscard]] bool mainSizeIsDefinite() const { return _mainSizeDefinite; }
 
     private:
-        // Force this node and every descendant dirty so a relayout actually
-        // re-runs (layoutImpl/strategies are gated on _style.dirty).
+        /// Force this node and every descendant dirty so a relayout actually re-runs
+        /// (layoutImpl/strategies are gated on _style.dirty).
         void markSubtreeDirtyForRelayout();
 
         Node *_parent = nullptr;
         Style _style{};
         Layout _layout{};
 
-        // Precise incremental-layout state. _descendantDirty is set by markDirtyToRoot
-        // on every ancestor of a changed node; a node with neither _style.dirty nor
-        // _descendantDirty (and unchanged available space) can reuse its cached layout.
+        /// Set by markDirtyToRoot on every ancestor of a changed node. A node with neither
+        /// _style.dirty nor _descendantDirty (and unchanged space) reuses its cached layout.
         bool _descendantDirty = false;
 
-        // Set by layoutContentsWithDefiniteSize for the duration of its strategy call; see
-        // mainSizeIsDefinite().
+        /// Set by layoutContentsWithDefiniteSize for the duration of its strategy call;
+        /// see mainSizeIsDefinite().
         bool _mainSizeDefinite = false;
 
-        // Set by layoutImpl when it shrink-wraps an AUTO main axis (the non-definite flex
-        // path), cleared by layoutContentsWithDefiniteSize when it re-lays at the resolved
-        // definite size. A grow container (e.g. a Row with a flex Spacer) shrink-wrapped this
-        // way commits a collapsed child layout; without this flag the definite-size gate could
-        // reuse it (its _lastDef size is unchanged) and never re-distribute the real width.
+        /// Set by layoutImpl when it shrink-wraps an AUTO main axis, cleared by the definite-size
+        /// re-layout. Forces that re-layout to run even when its _lastDef size is unchanged —
+        /// otherwise a shrink-wrapped grow container would reuse its collapsed layout.
         bool _collapsedSinceDefinite = false;
 
-        // Memo of the inputs the last solve ran against, so a clean subtree is only
-        // re-solved when the space it is measured against actually changes. NAN means
-        // "never laid out", which forces the first solve (the node also starts dirty).
+        /// Memo of the space each pass last ran against, so a clean subtree is re-solved only
+        /// when that space changes. NAN means "never laid out" and forces the first solve.
         float _lastAvailW = NAN, _lastAvailH = NAN;   ///< layoutImpl available space
         float _lastDefW   = NAN, _lastDefH   = NAN;   ///< layoutContentsWithDefiniteSize size
 
-        // Content-box size produced by the last full layoutImpl run (intrinsic / shrink-to-fit,
-        // BEFORE any parent flex grow/shrink). Restored on the reuse early-out so a clean child
-        // reports its content size for flex-basis derivation, rather than whatever value an
-        // ancestor's flex resolve last wrote into computedWidth/Height — which can be a
-        // shrunk-to-0 collapse that would otherwise propagate into this clean subtree.
+        /// Content-box size from the last full layoutImpl run (before any parent flex grow/shrink).
+        /// Restored on the reuse early-out so a clean child reports its content size for flex-basis
+        /// derivation rather than a transient grown/collapsed value left by an ancestor's resolve.
         float _implW = NAN, _implH = NAN;
     };
 }

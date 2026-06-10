@@ -1,10 +1,6 @@
-#ifndef NORMALFLOWSTRATEGY_H
-#define NORMALFLOWSTRATEGY_H
-
-
+#pragma once
 
 #include "LayoutStrategy.h"
-
 #include "masharifcore/macros.h"
 #include <vector>
 
@@ -22,8 +18,4 @@ namespace masharif {
 
         void layoutLine(std::vector<Node *> &lines, float y);
     };
-
-    void compute_child_position(Node *child);
-} // NAMESPACE
-
-#endif //NORMALFLOWSTRATEGY_H
+}

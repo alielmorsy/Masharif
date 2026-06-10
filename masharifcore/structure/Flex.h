@@ -25,11 +25,11 @@ namespace masharif {
         int order = 0;
         Gap gap;
 
-        [[nodiscard]] bool isRow() const {
+        [[nodiscard]] constexpr bool isRow() const {
             return direction == FlexDirection::Row || direction == FlexDirection::RowReverse;
         }
 
-        [[nodiscard]] bool isReverse() const {
+        [[nodiscard]] constexpr bool isReverse() const {
             return direction == FlexDirection::RowReverse || direction == FlexDirection::ColumnReverse;
         }
     };

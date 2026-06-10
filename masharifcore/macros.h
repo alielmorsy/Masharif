@@ -22,17 +22,5 @@ default: return "Unknown";                                       \
 // Helper to create string cases
 #define ENUM_CASE(VALUE) case VALUE: return #VALUE;
 
-
-#define STYLE_AWARE_STRUCT(StructName, ...)                 \
-struct StructName {                                     \
-__VA_ARGS__                                         \
-std::function<void()> markDirtyCallback;            \
-StructName(std::function<void()> cb = nullptr)      \
-: markDirtyCallback(std::move(cb)) {}          \
-void markDirty() { if (markDirtyCallback) markDirtyCallback(); } \
-};
-
-#define RESOLVE_VALUE(value, parent_dimension) (value.resolveValue(parent_dimension))
-
 #define DEF_NODE_LAYOUT(node) auto &node##Layout = node->layout()
 #define DEF_NODE_STYLE(node) auto &node##Style = node->style()
