@@ -118,10 +118,24 @@ namespace masharif {
         // mainSizeIsDefinite().
         bool _mainSizeDefinite = false;
 
+        // Set by layoutImpl when it shrink-wraps an AUTO main axis (the non-definite flex
+        // path), cleared by layoutContentsWithDefiniteSize when it re-lays at the resolved
+        // definite size. A grow container (e.g. a Row with a flex Spacer) shrink-wrapped this
+        // way commits a collapsed child layout; without this flag the definite-size gate could
+        // reuse it (its _lastDef size is unchanged) and never re-distribute the real width.
+        bool _collapsedSinceDefinite = false;
+
         // Memo of the inputs the last solve ran against, so a clean subtree is only
         // re-solved when the space it is measured against actually changes. NAN means
         // "never laid out", which forces the first solve (the node also starts dirty).
         float _lastAvailW = NAN, _lastAvailH = NAN;   ///< layoutImpl available space
         float _lastDefW   = NAN, _lastDefH   = NAN;   ///< layoutContentsWithDefiniteSize size
+
+        // Content-box size produced by the last full layoutImpl run (intrinsic / shrink-to-fit,
+        // BEFORE any parent flex grow/shrink). Restored on the reuse early-out so a clean child
+        // reports its content size for flex-basis derivation, rather than whatever value an
+        // ancestor's flex resolve last wrote into computedWidth/Height — which can be a
+        // shrunk-to-0 collapse that would otherwise propagate into this clean subtree.
+        float _implW = NAN, _implH = NAN;
     };
 }

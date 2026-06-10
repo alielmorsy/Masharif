@@ -136,8 +136,17 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
     // Full reuse: nothing in this subtree changed and the available space is identical
     // to the last solve, so the cached _layout (incl. computedFlexBasis and local
     // positions) is still valid. dirty is cleared at end of frame, not here.
-    if (spaceSame && !_style.dirty && !_descendantDirty && !anyDirectChildDirty)
+    if (spaceSame && !_style.dirty && !_descendantDirty && !anyDirectChildDirty) {
+        // Restore the content-box size this node last produced. A re-solving parent (e.g. one
+        // re-running because a SIBLING changed) reads computedWidth/Height right after this
+        // call to derive an AUTO flex-basis — but an earlier flex grow/shrink in the same
+        // pass may have overwritten them with a grown/shrunk (possibly collapsed-to-0) value.
+        // Reuse must report the content size, not that transient. The parent re-assigns the
+        // final size and local position afterwards.
+        _layout.computedWidth = _implW;
+        _layout.computedHeight = _implH;
         return;
+    }
 
     _lastAvailW = availableWidth;
     _lastAvailH = availableHeight;
@@ -146,6 +155,19 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
         computeDimensions(availableWidth, availableHeight);
 
     layoutStrategy->layout(availableWidth, availableHeight);
+
+    // If this is a flex node whose MAIN axis is AUTO, the strategy just shrink-wrapped it to
+    // content (the non-definite path collapses a flex Spacer / grow child to 0). Flag it so a
+    // later layoutContentsWithDefiniteSize re-distributes at the resolved size instead of
+    // reusing the collapsed layout — invisible to the _lastDef gate, which only sees the size.
+    if (!_mainSizeDefinite) {
+        const auto &dims = _style.dimensions();
+        const bool isFlex = dims.display != OuterDisplay::Block && dims.display != OuterDisplay::InlineBlock;
+        const bool mainAuto = _style.flex().isRow() ? dims.width.unit == CSSUnit::AUTO
+                                                    : dims.height.unit == CSSUnit::AUTO;
+        if (isFlex && mainAuto) _collapsedSinceDefinite = true;
+    }
+
     if (auto &position = _style.dimensions().position; position == PositionType::Relative) {
         auto &offset = _style.offsets();
         _layout.localX += offset.left.resolveValue(availableWidth) - offset.right.resolveValue(availableWidth);
@@ -174,6 +196,11 @@ void Node::layoutImpl(float availableWidth, float availableHeight) {
                                  +
                                  border.widthTop + border.widthBottom;
     }
+
+    // Remember this run's content-box size so a later reuse early-out can restore it (the
+    // parent may mutate computedWidth/Height via flex grow/shrink between now and then).
+    _implW = _layout.computedWidth;
+    _implH = _layout.computedHeight;
 }
 
 void Node::markSubtreeDirtyForRelayout() {
@@ -203,9 +230,12 @@ void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxH
     for (const auto &child: children) {
         if (child->_style.dirty) { anyDirectChildDirty = true; break; }
     }
-    if (!_style.dirty && !_descendantDirty && !anyDirectChildDirty &&
+    if (!_collapsedSinceDefinite &&
+        !_style.dirty && !_descendantDirty && !anyDirectChildDirty &&
         SameSize(borderBoxWidth, _lastDefW) && SameSize(borderBoxHeight, _lastDefH))
         return;
+    // This definite re-distribution supersedes any shrink-wrap an intervening layoutImpl left.
+    _collapsedSinceDefinite = false;
     _lastDefW = borderBoxWidth;
     _lastDefH = borderBoxHeight;
 
