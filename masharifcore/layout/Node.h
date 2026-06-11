@@ -1,129 +1,200 @@
 #pragma once
 
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 #include <masharifcore/structure/Style.h>
 
 
 #include "Layout.h"
 
-#include "NormalFlowStrategy.h"
-#include "FlexLayoutStrategy.h"
-
 
 namespace masharif {
     class Node;
+    struct LayoutContext;
     using SharedNode = std::shared_ptr<Node>;
 
     class Node {
     public:
-        Layout &layout() { return _layout; }
-
-        std::vector<SharedNode> children;
-        std::vector<SharedNode> outOfFlowChildren;
-        Style &style() { return _style; }
-
-        std::shared_ptr<LayoutStrategy> layoutStrategy;
-
         explicit Node(const OuterDisplay display = OuterDisplay::Block) {
-            setDisplay(display);
+            m_Style.SetOwner(this);
+            SetDisplay(display);
         }
 
-        void startUpdatingPositions();
+        [[nodiscard]] Layout &GetLayout() { return m_Layout; }
 
-        void positionOutOfFlowChildren();
+        [[nodiscard]] Style &GetStyle() { return m_Style; }
 
-        void calculate(float availableWidth, float availableHeight);
+        /// Solve this subtree against the given available space, then derive absolute
+        /// positions and clear dirty flags: the per-frame entry point.
+        void Calculate(float availableWidth, float availableHeight);
 
-        void layoutImpl(float availableWidth, float availableHeight);
+        /// Standalone solve at the given available space (builds its own LayoutContext).
+        /// Unlike Calculate it neither clears dirty flags nor derives absolute positions.
+        void LayoutImpl(float availableWidth, float availableHeight, bool ignoreMinMax = false);
 
-        /// Re-lay-out this subtree at an already-resolved definite border-box size (set by the
-        /// flex parent's main-axis resolution + updateCrossSize's cross-axis stretch). Needed
-        /// because the flex-basis phase measures AUTO items against NaN and collapses them to 0.
-        void layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxHeight);
+        [[nodiscard]] Node *Parent() const { return m_Parent; }
 
-        void computeDimensions(float availableWidth, float availableHeight);
+        [[nodiscard]] const std::vector<SharedNode> &Children() const noexcept { return m_Children; }
 
-        void positionOutOfFlowChild(Node *ancestor, float refWidth, float refHeight);
-
-        void handleStickyPosition(float refWidth, float refHeight);
-
-        [[nodiscard]] Node *parent() const {
-            return _parent;
+        /// Replace the whole child list, reparenting every new child. Previous children are
+        /// dropped without being detached (reconciliation semantics: the caller discards
+        /// stale handles).
+        void SetChildren(std::vector<SharedNode> children) {
+            for (auto &child: children) child->SetParent(this);
+            m_Children = std::move(children);
+            MarkDirtyToRoot();
         }
 
-        void setParent(Node *parent) {
-            _parent = parent;
+        void ClearChildren() {
+            m_Children.clear();
+            MarkDirtyToRoot();
         }
 
-        void setParent(SharedNode &parent) {
-            _parent = parent.get();
+        void AddChild(const SharedNode &child) {
+            m_Children.push_back(child);
+            child->SetParent(this);
+            MarkDirtyToRoot();
         }
 
-        [[nodiscard]] SharedNode firstChild() const {
-            return children[0];
+        void RemoveChild(SharedNode &child);
+
+        [[nodiscard]] SharedNode FirstChild() const { return m_Children[0]; }
+
+        [[nodiscard]] SharedNode LastChild() const { return m_Children.back(); }
+
+        /// Pure style write: the layout algorithm is selected from the display type at solve
+        /// time (LayoutStrategy::For), so switching display allocates nothing.
+        void SetDisplay(OuterDisplay display) {
+            GetStyle().Modify<Dimensions>().Display = display;
         }
 
-        [[nodiscard]] SharedNode lastChild() const {
-            return children.back();
-        }
-
-        void setDisplay(OuterDisplay display) {
-            style().modify<Dimensions>().display = display;
-            if (display == OuterDisplay::Block || display == OuterDisplay::InlineBlock) {
-                layoutStrategy = std::make_shared<NormalFlowStrategy>(this);
-            } else {
-                layoutStrategy = std::make_shared<FlexLayoutStrategy>(this);
-            }
-        }
-
-        void addChild(const SharedNode &child) {
-            children.push_back(child);
-            child->_parent = this;
-            _style.dirty = true;
-        }
-
-        void removeChild(SharedNode &child);
-
-        /// Mark this node dirty and flag every ancestor's _descendantDirty up to the root.
-        /// layoutImpl only inspects DIRECT children, so a deep change needs this to be seen.
-        void markDirtyToRoot();
-
-        /// True only while layoutContentsWithDefiniteSize drives the strategy: the parent has
-        /// resolved this node's border box, so the flex strategy must NOT shrink-to-fit an AUTO
-        /// main axis (that would re-collapse a cross-stretched grow container to its 0 basis).
-        [[nodiscard]] bool mainSizeIsDefinite() const { return _mainSizeDefinite; }
+        /// Mark this node dirty and flag every ancestor up to the root. Style::Modify calls
+        /// this automatically; only mutations done behind the Style API (e.g. a direct
+        /// GetStyle().Dirty write) still need it explicitly.
+        void MarkDirtyToRoot();
 
     private:
-        /// Force this node and every descendant dirty so a relayout actually re-runs
-        /// (layoutImpl/strategies are gated on _style.dirty).
-        void markSubtreeDirtyForRelayout();
+        friend class FlexLayoutStrategy;
+        friend class NormalFlowStrategy;
 
-        Node *_parent = nullptr;
-        Style _style{};
-        Layout _layout{};
+        void LayoutImpl(LayoutContext &ctx, float availableWidth, float availableHeight,
+                        bool ignoreMinMax = false);
 
-        /// Set by markDirtyToRoot on every ancestor of a changed node. A node with neither
-        /// _style.dirty nor _descendantDirty (and unchanged space) reuses its cached layout.
-        bool _descendantDirty = false;
+        /// Re-lay-out this subtree at an already-resolved definite border-box size (set by the
+        /// flex parent's main-axis resolution + the cross-axis stretch). Needed because the
+        /// flex-basis phase measures AUTO items against NaN and collapses them to 0.
+        void LayoutContentsWithDefiniteSize(LayoutContext &ctx, float borderBoxWidth, float borderBoxHeight);
 
-        /// Set by layoutContentsWithDefiniteSize for the duration of its strategy call;
-        /// see mainSizeIsDefinite().
-        bool _mainSizeDefinite = false;
+        void StartUpdatingPositions(LayoutContext &ctx);
 
-        /// Set by layoutImpl when it shrink-wraps an AUTO main axis, cleared by the definite-size
-        /// re-layout. Forces that re-layout to run even when its _lastDef size is unchanged —
-        /// otherwise a shrink-wrapped grow container would reuse its collapsed layout.
-        bool _collapsedSinceDefinite = false;
+        void PositionOutOfFlowChildren(LayoutContext &ctx);
+
+        void ComputeDimensions(LayoutContext &ctx, float availableWidth, float availableHeight,
+                               bool ignoreMinMax = false);
+
+        void PositionOutOfFlowChild(Node *ancestor, float refWidth, float refHeight);
+
+        void HandleStickyPosition(float refWidth, float refHeight);
+
+        void SetParent(Node *parent) {
+            if (m_Parent != parent) ResetFrameStamps();
+            m_Parent = parent;
+        }
+
+        /// True only while LayoutContentsWithDefiniteSize drives the strategy: the parent has
+        /// resolved this node's border box, so the flex strategy must NOT shrink-to-fit an
+        /// AUTO main axis (that would re-collapse a cross-stretched grow container).
+        [[nodiscard]] bool MainSizeIsDefinite() const { return m_MainSizeDefinite; }
+
+        /// One completed LayoutImpl solve of the current frame: inputs -> resulting content
+        /// size. Generation == 0 marks an empty entry. See docs/layout-caching.md.
+        struct MeasureCacheEntry {
+            std::uint64_t Generation = 0;
+            float AvailW = NAN, AvailH = NAN;
+            bool IgnoreMinMax = false;
+            float ResultW = NAN, ResultH = NAN;
+        };
+
+        static constexpr std::size_t MeasureCacheSize = 4;
+
+        /// Bump the tree-wide frame counter (owned by the root) and return it. Entry points
+        /// stamp themselves with it; descendants pull it lazily at solve entry.
+        std::uint64_t BumpTreeGeneration() {
+            Node *root = this;
+            while (root->m_Parent) root = root->m_Parent;
+            return ++root->m_Generation;
+        }
+
+        /// Adopt the parent's generation when it is newer; first statement of every solve.
+        void PullGeneration() {
+            if (m_Parent && m_Parent->m_Generation > m_Generation)
+                m_Generation = m_Parent->m_Generation;
+        }
+
+        void RecordMeasure(float availW, float availH, bool ignoreMinMax,
+                           float resultW, float resultH);
+
+        [[nodiscard]] const MeasureCacheEntry *FindMeasure(float availW, float availH,
+                                                           bool ignoreMinMax) const;
+
+        /// Frame stamps are only comparable within one tree; clear them when this node is
+        /// re-parented so entries from another tree's counter can never match.
+        void ResetFrameStamps() {
+            m_Generation = 0;
+            m_DefGeneration = 0;
+            m_MeasureCache = {};
+            m_MeasureCacheNext = 0;
+        }
+
+        Node *m_Parent = nullptr;
+        Style m_Style{};
+        Layout m_Layout{};
+
+        std::vector<SharedNode> m_Children;
+
+        /// Out-of-flow (absolute/fixed/sticky) children diverted by the last strategy run;
+        /// consumed (laid out + positioned) by the positions walk, then cleared.
+        std::vector<SharedNode> m_OutOfFlowChildren;
+
+        /// Set by MarkDirtyToRoot on every ancestor of a changed node. A node with neither
+        /// m_Style.Dirty nor m_DescendantDirty (and unchanged space) reuses its cached layout.
+        bool m_DescendantDirty = false;
+
+        /// See MainSizeIsDefinite().
+        bool m_MainSizeDefinite = false;
+
+        /// True while the descendants reflect an impl-path (available-space) strategy run
+        /// rather than the last definite-size distribution; forces the next definite pass to
+        /// re-run even when its size memo matches. Subsumes the old shrink-wrap special case.
+        bool m_StrategyRanSinceDefinite = false;
+
+        /// Set whenever a strategy runs for this node (its children were repositioned);
+        /// consumed by the gated StartUpdatingPositions walk.
+        bool m_PositionsDirty = false;
+
+        /// Tree-frame counter: the root owns the running value (bumped per Calculate /
+        /// standalone LayoutImpl); every other node carries the stamp it last solved under.
+        std::uint64_t m_Generation = 0;
+
+        /// Generation of the last definite-size strategy run (pairs with m_LastDefW/H).
+        std::uint64_t m_DefGeneration = 0;
+
+        std::array<MeasureCacheEntry, MeasureCacheSize> m_MeasureCache{};
+        std::uint8_t m_MeasureCacheNext = 0;
 
         /// Memo of the space each pass last ran against, so a clean subtree is re-solved only
         /// when that space changes. NAN means "never laid out" and forces the first solve.
-        float _lastAvailW = NAN, _lastAvailH = NAN;   ///< layoutImpl available space
-        float _lastDefW   = NAN, _lastDefH   = NAN;   ///< layoutContentsWithDefiniteSize size
+        float m_LastAvailW = NAN, m_LastAvailH = NAN; ///< LayoutImpl available space
+        float m_LastDefW = NAN, m_LastDefH = NAN;     ///< LayoutContentsWithDefiniteSize size
 
-        /// Content-box size from the last full layoutImpl run (before any parent flex grow/shrink).
-        /// Restored on the reuse early-out so a clean child reports its content size for flex-basis
-        /// derivation rather than a transient grown/collapsed value left by an ancestor's resolve.
-        float _implW = NAN, _implH = NAN;
+        /// Content-box size from the last full LayoutImpl run (before any parent flex
+        /// grow/shrink). Restored on the reuse early-out so a clean child reports its content
+        /// size for flex-basis derivation rather than a transient grown/collapsed value.
+        float m_ImplW = NAN, m_ImplH = NAN;
     };
 }

@@ -4,9 +4,9 @@
 
 namespace masharif {
     struct BorderProperties {
-        CSSValue widthTop{0};
-        CSSValue widthBottom{0};
-        CSSValue widthLeft{0};
-        CSSValue widthRight{0};
+        CSSValue WidthTop{0};
+        CSSValue WidthBottom{0};
+        CSSValue WidthLeft{0};
+        CSSValue WidthRight{0};
     };
 }

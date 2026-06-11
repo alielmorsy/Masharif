@@ -4,9 +4,9 @@
 
 namespace masharif {
     struct Edge {
-        CSSValue left{0, CSSUnit::PX};
-        CSSValue top{0, CSSUnit::PX};
-        CSSValue bottom{0, CSSUnit::PX};
-        CSSValue right{0, CSSUnit::PX};
+        CSSValue Left{0, CSSUnit::Px};
+        CSSValue Top{0, CSSUnit::Px};
+        CSSValue Bottom{0, CSSUnit::Px};
+        CSSValue Right{0, CSSUnit::Px};
     };
 }

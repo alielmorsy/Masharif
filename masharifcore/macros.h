@@ -21,6 +21,3 @@ default: return "Unknown";                                       \
 
 // Helper to create string cases
 #define ENUM_CASE(VALUE) case VALUE: return #VALUE;
-
-#define DEF_NODE_LAYOUT(node) auto &node##Layout = node->layout()
-#define DEF_NODE_STYLE(node) auto &node##Style = node->style()

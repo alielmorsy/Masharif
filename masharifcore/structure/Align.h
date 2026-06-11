@@ -13,7 +13,7 @@ namespace masharif {
 
 
     ENUM_BEGIN(AlignItems) {
-        AUTO_ALIGN = -2,
+        AutoAlign = -2,
         Stretch = -1,
         FlexStart = 0,
         FlexCenter = 1,

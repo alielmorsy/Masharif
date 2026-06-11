@@ -1,41 +1,16 @@
 #pragma once
 
-#include <memory>
-
 #include "LayoutStrategy.h"
 
-#include "masharifcore/macros.h"
-#include <vector>
-
 namespace masharif {
-    class Node;
-
-    struct FlexLine {
-        std::vector<Node *> flexItems;
-        int numberOfAutoMargin;
-        float takenSize;
-        float totalFlexGrow;
-        float totalFlexShrinkScaledFactors;
-        float crossSize;
-    };
-
-    class FlexLayoutStrategy : public LayoutStrategy {
+    class FlexLayoutStrategy final : public LayoutStrategy {
     public:
-        explicit FlexLayoutStrategy(Node *node)
-            : LayoutStrategy(node) {
-        }
-
-        ~FlexLayoutStrategy() override = default;
-
-        void layout(float availableWidth, float availableHeight) override;
+        void Layout(Node &container, LayoutContext &ctx,
+                    float availableWidth, float availableHeight) const override;
 
     private:
-        FlexLine calculateFlexLine(std::vector<Node *>::iterator &iterator,
-                                   std::vector<Node *>::iterator &end, float totalMainAxisSize);
-
-        void resolveFlexibleLengths(FlexLine &line, float availableSpace, bool isRow, float availableWidth,
-                                    float availableHeight);
-
-        void updateCrossSize(std::vector<FlexLine> &lines);
+        /// One flex solve for one container; defined in the .cpp. Nested so it shares this
+        /// strategy's friend access to Node ([class.access.nest]).
+        class Solver;
     };
 }

@@ -1,5 +1,8 @@
 #include "Node.h"
 
+#include "LayoutContext.h"
+#include "LayoutStrategy.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -13,77 +16,92 @@ namespace
         if (std::isnan(a) && std::isnan(b)) return true;
         return a == b;
     }
-}
 
-void Node::removeChild(SharedNode& child)
-{
-    auto it = std::find(children.begin(), children.end(), child);
-    if (it != children.end())
+    /// Containing block for an absolutely positioned node: the nearest *positioned*
+    /// (non-Static) ancestor — CSS semantics — falling back to the root.
+    Node* FindContainingBlock(Node* child)
     {
-        children.erase(it);
-        _style.dirty = true;
+        Node* current = child->Parent();
+        if (!current) return child;
+        while (current->Parent() &&
+               current->GetStyle().GetDimensions().Position == PositionType::Static)
+        {
+            current = current->Parent();
+        }
+        return current;
     }
 }
 
-void Node::markDirtyToRoot()
+void Node::RemoveChild(SharedNode& child)
 {
-    _style.dirty = true;
-    for (Node* p = _parent; p && !p->_descendantDirty; p = p->_parent)
+    auto it = std::find(m_Children.begin(), m_Children.end(), child);
+    if (it != m_Children.end())
     {
-        p->_descendantDirty = true;
+        m_Children.erase(it);
+        MarkDirtyToRoot();
     }
 }
 
-
-static Node* findRelativeParent(Node* child)
+void Node::MarkDirtyToRoot()
 {
-    auto current = child;
-    while (true)
+    m_Style.Dirty = true;
+    for (Node* p = m_Parent; p && !p->m_DescendantDirty; p = p->m_Parent)
     {
-        auto position = child->style().dimensions().position;
-        if (position == PositionType::Relative)
-            return current;
-        if (!current->parent()) return current;
-        current = current->parent();
+        p->m_DescendantDirty = true;
     }
 }
 
-void Node::startUpdatingPositions()
+void Node::StartUpdatingPositions(LayoutContext& ctx)
 {
     // Clear dirty at end of frame (not mid-solve, which would hide a change from the
     // later definite-size pass).
-    _style.dirty = false;
-    _descendantDirty = false;
+    m_Style.Dirty = false;
+    m_DescendantDirty = false;
+    m_PositionsDirty = false;
 
-    const float absX = _layout.computedX;
-    const float absY = _layout.computedY;
-    for (auto& child : children)
+    const float absX = m_Layout.ComputedX;
+    const float absY = m_Layout.ComputedY;
+    for (auto& child : m_Children)
     {
-        auto& position = child->style().dimensions().position;
+        auto& position = child->GetStyle().GetDimensions().Position;
         if (position != PositionType::Static &&
             position != PositionType::Relative)
         {
-            child->startUpdatingPositions();
+            // Out-of-flow subtrees are solved, positioned AND walked by
+            // PositionOutOfFlowChildren — touching them here would clear their dirty
+            // flags before that solve runs.
             continue;
         }
-        DEF_NODE_LAYOUT(child);
+        auto& childLayout = child->m_Layout;
         // Derive absolute from stable local (idempotent: a skipped clean subtree still
         // lands correctly when an ancestor moves).
-        childLayout.computedX = absX + childLayout.localX;
-        childLayout.computedY = absY + childLayout.localY;
+        const float newX = absX + childLayout.LocalX;
+        const float newY = absY + childLayout.LocalY;
+        // NaN-safe: NaN != NaN forces a visit, never a skip.
+        const bool originChanged = newX != childLayout.ComputedX || newY != childLayout.ComputedY;
+        childLayout.ComputedX = newX;
+        childLayout.ComputedY = newY;
 
-        child->startUpdatingPositions();
-        child->positionOutOfFlowChildren();
+        // Recurse only where something can have changed: the subtree moved, was re-solved
+        // (m_PositionsDirty), or carries dirt to clear. MarkDirtyToRoot flags every ancestor
+        // and a strategy only runs while all ancestors' strategies are on the stack, so a
+        // flagged node is always reachable through flagged ancestors — skipped subtrees are
+        // flag-free by construction. Idle frames touch only the clean frontier.
+        if (originChanged || child->m_PositionsDirty || child->m_Style.Dirty || child->m_DescendantDirty)
+        {
+            child->StartUpdatingPositions(ctx);
+            child->PositionOutOfFlowChildren(ctx);
+        }
     }
 }
 
-void Node::positionOutOfFlowChildren()
+void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
 {
-    for (const auto& child : outOfFlowChildren)
+    for (const auto& child : m_OutOfFlowChildren)
     {
         Node* ancestor = nullptr;
         float refWidth, refHeight;
-        auto position = child->style().dimensions().position;
+        auto position = child->GetStyle().GetDimensions().Position;
         if (position == PositionType::Fixed)
         {
             // TODO: resolve against the viewport as containing block.
@@ -92,205 +110,236 @@ void Node::positionOutOfFlowChildren()
         }
         else
         {
-            ancestor = findRelativeParent(child.get());
-            refWidth = ancestor->_layout.computedWidth;
-            refHeight = ancestor->_layout.computedHeight;
+            ancestor = FindContainingBlock(child.get());
+            refWidth = ancestor->m_Layout.ComputedWidth;
+            refHeight = ancestor->m_Layout.ComputedHeight;
         }
 
-        child->layoutImpl(refWidth, refHeight);
+        child->LayoutImpl(ctx, refWidth, refHeight);
 
         if (position == PositionType::Sticky)
         {
-            child->handleStickyPosition(refWidth, refWidth);
+            child->HandleStickyPosition(refWidth, refHeight);
         }
         else
         {
-            child->positionOutOfFlowChild(ancestor, refWidth, refHeight);
+            child->PositionOutOfFlowChild(ancestor, refWidth, refHeight);
         }
+
+        // The main walk skips out-of-flow subtrees entirely; derive their descendants'
+        // absolute coordinates from the origin just set, and consume nested out-of-flow
+        // lists. This runs in the same frame — no one-frame lag, no stale fix-ups.
+        child->StartUpdatingPositions(ctx);
+        child->PositionOutOfFlowChildren(ctx);
     }
-    outOfFlowChildren.clear();
+    m_OutOfFlowChildren.clear();
 }
 
-void Node::calculate(float availableWidth, float availableHeight)
+void Node::Calculate(float availableWidth, float availableHeight)
 {
-    layoutImpl(availableWidth, availableHeight);
+    m_Generation = BumpTreeGeneration();
+    LayoutContext ctx;
+    LayoutImpl(ctx, availableWidth, availableHeight);
     // Root's local origin is its absolute origin; descendants derive theirs from it.
-    _layout.computedX = _layout.localX;
-    _layout.computedY = _layout.localY;
-    startUpdatingPositions();
+    m_Layout.ComputedX = m_Layout.LocalX;
+    m_Layout.ComputedY = m_Layout.LocalY;
+    StartUpdatingPositions(ctx);
+    // The walk consumes every descendant's out-of-flow list; the root's own list has no
+    // other consumer, so it is handled here.
+    PositionOutOfFlowChildren(ctx);
 }
 
-void Node::layoutImpl(float availableWidth, float availableHeight)
+void Node::LayoutImpl(float availableWidth, float availableHeight, bool ignoreMinMax)
 {
-    if (_style.dimensions().display == OuterDisplay::None)
+    m_Generation = BumpTreeGeneration();
+    LayoutContext ctx;
+    LayoutImpl(ctx, availableWidth, availableHeight, ignoreMinMax);
+}
+
+const Node::MeasureCacheEntry* Node::FindMeasure(float availW, float availH, bool ignoreMinMax) const
+{
+    if (m_Generation == 0) return nullptr; // never solved under a frame stamp
+    for (const auto& entry : m_MeasureCache)
     {
-        _layout.computedWidth = _layout.computedHeight = 0.0f;
+        if (entry.Generation == m_Generation &&
+            entry.IgnoreMinMax == ignoreMinMax &&
+            SameSize(entry.AvailW, availW) && SameSize(entry.AvailH, availH))
+            return &entry;
+    }
+    return nullptr;
+}
+
+void Node::RecordMeasure(float availW, float availH, bool ignoreMinMax, float resultW, float resultH)
+{
+    m_MeasureCache[m_MeasureCacheNext] = {m_Generation, availW, availH, ignoreMinMax, resultW, resultH};
+    m_MeasureCacheNext = static_cast<std::uint8_t>((m_MeasureCacheNext + 1) % MeasureCacheSize);
+}
+
+void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableHeight, bool ignoreMinMax)
+{
+    PullGeneration();
+
+    if (m_Style.GetDimensions().Display == OuterDisplay::None)
+    {
+        m_Layout.ComputedWidth = m_Layout.ComputedHeight = 0.0f;
         return;
     }
 
-    const bool spaceSame = SameSize(availableWidth, _lastAvailW) &&
-        SameSize(availableHeight, _lastAvailH);
+    const bool spaceSame = SameSize(availableWidth, m_LastAvailW) &&
+        SameSize(availableHeight, m_LastAvailH);
 
-    // A directly-dirtied child forces a re-solve even without markDirtyToRoot, preserving the
-    // standalone contract (set a child dirty, call calculate); markDirtyToRoot covers the deep case.
-    bool anyDirectChildDirty = false;
-    for (const auto& child : children)
+    // Full reuse: nothing changed and the space matches the last solve, so the cached layout
+    // is still valid (dirty is cleared at end of frame, not here). Style::Modify propagates
+    // m_DescendantDirty through every ancestor, so these two flags are the whole contract.
+    if (spaceSame && !m_Style.Dirty && !m_DescendantDirty)
     {
-        if (child->_style.dirty)
-        {
-            anyDirectChildDirty = true;
-            break;
-        }
-    }
-
-    // Full reuse: nothing changed and the space matches the last solve, so the cached _layout
-    // is still valid (dirty is cleared at end of frame, not here).
-    if (spaceSame && !_style.dirty && !_descendantDirty && !anyDirectChildDirty)
-    {
-        // Report the content-box size, not a transient grow/shrink value an ancestor's resolve may
-        // have left in computedWidth/Height (a re-solving parent reads it for AUTO flex-basis).
-        _layout.computedWidth = _implW;
-        _layout.computedHeight = _implH;
+        // Report the content-box size, not a transient grow/shrink value an ancestor's resolve
+        // may have left in ComputedWidth/Height (a re-solving parent reads it for flex basis).
+        m_Layout.ComputedWidth = m_ImplW;
+        m_Layout.ComputedHeight = m_ImplH;
+        // Make the result replayable for this frame: if a later full solve at different
+        // inputs overwrites m_LastAvail, a repeat call at these inputs must not re-solve.
+        if (!FindMeasure(availableWidth, availableHeight, ignoreMinMax))
+            RecordMeasure(availableWidth, availableHeight, ignoreMinMax, m_ImplW, m_ImplH);
         return;
     }
 
-    _lastAvailW = availableWidth;
-    _lastAvailH = availableHeight;
-
-    if (_style.dirty || !spaceSame)
-        computeDimensions(availableWidth, availableHeight);
-
-    layoutStrategy->layout(availableWidth, availableHeight);
-
-    // A flex node with an AUTO main axis was just shrink-wrapped to content; flag it so a later
-    // definite-size pass re-distributes instead of reusing the collapse (the _lastDef gate only
-    // sees size, not the collapse).
-    if (!_mainSizeDefinite)
+    // Within-frame replay: dirty means "solve at least once this frame", and this frame has
+    // already solved at exactly these inputs — the subtree reflects an identical-input run,
+    // so only the content size needs restoring. This is what collapses the former
+    // O(2^depth) double-recursion (basis + definite passes) to one solve per distinct input.
+    if (const MeasureCacheEntry* hit = FindMeasure(availableWidth, availableHeight, ignoreMinMax))
     {
-        const auto& dims = _style.dimensions();
-        const bool isFlex = dims.display != OuterDisplay::Block && dims.display != OuterDisplay::InlineBlock;
-        const bool mainAuto = _style.flex().isRow()
-                                  ? dims.width.unit == CSSUnit::AUTO
-                                  : dims.height.unit == CSSUnit::AUTO;
-        if (isFlex && mainAuto) _collapsedSinceDefinite = true;
+        m_Layout.ComputedWidth = hit->ResultW;
+        m_Layout.ComputedHeight = hit->ResultH;
+        return;
     }
 
-    if (auto& position = _style.dimensions().position; position == PositionType::Relative)
+    m_LastAvailW = availableWidth;
+    m_LastAvailH = availableHeight;
+
+    if (m_Style.Dirty || !spaceSame)
+        ComputeDimensions(ctx, availableWidth, availableHeight, ignoreMinMax);
+
+    LayoutStrategy::For(m_Style.GetDimensions().Display).Layout(*this, ctx, availableWidth, availableHeight);
+    ++m_Layout.StrategyRuns;
+
+    // Descendants now reflect this available-space run, not the last definite distribution;
+    // the next definite pass must re-run even if its size memo matches. (Subsumes the old
+    // shrink-wrapped-AUTO-main-axis special case.)
+    m_StrategyRanSinceDefinite = true;
+    m_PositionsDirty = true;
+
+    if (auto& position = m_Style.GetDimensions().Position; position == PositionType::Relative)
     {
-        auto& offset = _style.offsets();
-        _layout.localX += offset.left.resolveValue(availableWidth) - offset.right.resolveValue(availableWidth);
-        _layout.localY += offset.top.resolveValue(availableHeight) - offset.bottom.resolveValue(availableHeight);
+        auto& offset = m_Style.GetOffsets();
+        m_Layout.LocalX += offset.Left.ResolveValue(availableWidth) - offset.Right.ResolveValue(availableWidth);
+        m_Layout.LocalY += offset.Top.ResolveValue(availableHeight) - offset.Bottom.ResolveValue(availableHeight);
     }
-    auto& containerStyle = _style;
+
     // Only Block/InlineBlock get an AUTO-height override; flex handles its own height.
-    auto display = containerStyle.dimensions().display;
-    bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
+    const auto display = m_Style.GetDimensions().Display;
+    const bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
 
-    if (isBlock && containerStyle.dimensions().height.unit == CSSUnit::AUTO)
+    if (isBlock && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto)
     {
         float maxChildBottom = 0.0f;
-        for (const auto& child : children)
+        for (const auto& child : m_Children)
         {
-            DEF_NODE_LAYOUT(child);
-            DEF_NODE_STYLE(child);
-            const auto position = childStyle.dimensions().position;
-            auto& childMargin = childStyle.margin();
+            auto& childLayout = child->m_Layout;
+            auto& childStyle = child->m_Style;
+            const auto position = childStyle.GetDimensions().Position;
+            auto& childMargin = childStyle.GetMargin();
             if (position == PositionType::Static || position == PositionType::Relative)
             {
                 maxChildBottom = std::max(maxChildBottom,
-                                          childLayout.localY + childLayout.computedHeight + childMargin.bottom +
-                                          childMargin.top);
+                                          childLayout.LocalY + childLayout.ComputedHeight + childMargin.Bottom +
+                                          childMargin.Top);
             }
         }
 
-        auto& border = containerStyle.border();
-        _layout.computedHeight = maxChildBottom + _style.padding().top + _style.padding().bottom
+        auto& border = m_Style.GetBorder();
+        m_Layout.ComputedHeight = maxChildBottom + m_Style.GetPadding().Top + m_Style.GetPadding().Bottom
             +
-            border.widthTop + border.widthBottom;
+            border.WidthTop + border.WidthBottom;
     }
 
     // Remember this run's content-box size for the reuse early-out (the parent may mutate
-    // computedWidth/Height via flex grow/shrink before then).
-    _implW = _layout.computedWidth;
-    _implH = _layout.computedHeight;
+    // ComputedWidth/Height via flex grow/shrink before then), and make it replayable for
+    // repeat same-input calls within this frame.
+    m_ImplW = m_Layout.ComputedWidth;
+    m_ImplH = m_Layout.ComputedHeight;
+    RecordMeasure(availableWidth, availableHeight, ignoreMinMax, m_ImplW, m_ImplH);
 }
 
-void Node::markSubtreeDirtyForRelayout()
+void Node::LayoutContentsWithDefiniteSize(LayoutContext& ctx, float borderBoxWidth, float borderBoxHeight)
 {
-    _style.dirty = true;
-    for (auto& child : children)
-    {
-        child->markSubtreeDirtyForRelayout();
-    }
-}
+    PullGeneration();
 
-void Node::layoutContentsWithDefiniteSize(float borderBoxWidth, float borderBoxHeight)
-{
-    if (_style.dimensions().display == OuterDisplay::None) return;
-    if (children.empty()) return; // leaf: nothing to re-lay-out
+    if (m_Style.GetDimensions().Display == OuterDisplay::None) return;
+    if (m_Children.empty()) return; // leaf: nothing to re-lay-out
     if (std::isnan(borderBoxWidth) || std::isnan(borderBoxHeight)) return;
 
-    // Adopt the border-box size decided by the flex parent (main) and updateCrossSize (cross).
-    _layout.computedWidth = borderBoxWidth;
-    _layout.computedHeight = borderBoxHeight;
+    // Adopt the border-box size decided by the flex parent (main) and the cross-axis stretch.
+    m_Layout.ComputedWidth = borderBoxWidth;
+    m_Layout.ComputedHeight = borderBoxHeight;
 
-    // Reuse the cached subtree when nothing changed and the definite size matches the last pass.
-    // On a size change the layoutImpl memo below misses and re-expands, so no force-dirty needed.
-    bool anyDirectChildDirty = false;
-    for (const auto& child : children)
-    {
-        if (child->_style.dirty)
-        {
-            anyDirectChildDirty = true;
-            break;
-        }
-    }
-    if (!_collapsedSinceDefinite &&
-        !_style.dirty && !_descendantDirty && !anyDirectChildDirty &&
-        SameSize(borderBoxWidth, _lastDefW) && SameSize(borderBoxHeight, _lastDefH))
+    // The memo is only meaningful while the descendants still reflect the last definite
+    // distribution; any impl-path strategy run since then repositioned them.
+    const bool stillDefinite = SameSize(borderBoxWidth, m_LastDefW) &&
+        SameSize(borderBoxHeight, m_LastDefH) &&
+        !m_StrategyRanSinceDefinite;
+
+    // Reuse across frames when the subtree is clean, or within the frame when this exact
+    // distribution already ran this generation (the flex parent's second pass).
+    if (stillDefinite &&
+        ((!m_Style.Dirty && !m_DescendantDirty) || (m_Generation != 0 && m_DefGeneration == m_Generation)))
         return;
-    // This definite re-distribution supersedes any shrink-wrap an intervening layoutImpl left.
-    _collapsedSinceDefinite = false;
-    _lastDefW = borderBoxWidth;
-    _lastDefH = borderBoxHeight;
 
-    // Border-box -> content-box for the strategy (computeDimensions re-adds padding+border,
+    m_StrategyRanSinceDefinite = false;
+    m_LastDefW = borderBoxWidth;
+    m_LastDefH = borderBoxHeight;
+    m_DefGeneration = m_Generation;
+
+    // Border-box -> content-box for the strategy (ComputeDimensions re-adds padding+border,
     // so subtract them here exactly once).
-    auto& padding = _style.padding();
-    auto& border = _style.border();
-    float horizontal = padding.left + padding.right + border.widthLeft + border.widthRight;
-    float vertical = padding.top + padding.bottom + border.widthTop + border.widthBottom;
-    float contentWidth = std::max(0.0f, borderBoxWidth - horizontal);
-    float contentHeight = std::max(0.0f, borderBoxHeight - vertical);
+    auto& padding = m_Style.GetPadding();
+    auto& border = m_Style.GetBorder();
+    const float horizontal = padding.Left + padding.Right + border.WidthLeft + border.WidthRight;
+    const float vertical = padding.Top + padding.Bottom + border.WidthTop + border.WidthBottom;
+    const float contentWidth = std::max(0.0f, borderBoxWidth - horizontal);
+    const float contentHeight = std::max(0.0f, borderBoxHeight - vertical);
 
-    // Drive the strategy directly (layoutImpl would re-apply the Block AUTO-height override and
-    // discard the adopted size). mainSizeIsDefinite tells flex to fill, not shrink-wrap.
-    _mainSizeDefinite = true;
-    layoutStrategy->layout(contentWidth, contentHeight);
-    _mainSizeDefinite = false;
+    // Drive the strategy directly (LayoutImpl would re-apply the Block AUTO-height override
+    // and discard the adopted size). MainSizeIsDefinite tells flex to fill, not shrink-wrap.
+    m_MainSizeDefinite = true;
+    LayoutStrategy::For(m_Style.GetDimensions().Display).Layout(*this, ctx, contentWidth, contentHeight);
+    m_MainSizeDefinite = false;
+    ++m_Layout.StrategyRuns;
+    m_PositionsDirty = true;
 
     // Re-assert the definite border box (the strategy may rewrite it; guard rounding drift).
-    _layout.computedWidth = borderBoxWidth;
-    _layout.computedHeight = borderBoxHeight;
+    m_Layout.ComputedWidth = borderBoxWidth;
+    m_Layout.ComputedHeight = borderBoxHeight;
 }
 
-void Node::computeDimensions(float availableWidth, float availableHeight)
+void Node::ComputeDimensions(LayoutContext& ctx, float availableWidth, float availableHeight, bool ignoreMinMax)
 {
-    auto& dimensions = _style.dimensions();
-    auto& width = dimensions.width;
-    auto& height = dimensions.height;
-    auto& minWidth = dimensions.minWidth;
-    auto& maxWidth = dimensions.maxWidth;
+    auto& dimensions = m_Style.GetDimensions();
+    auto& width = dimensions.Width;
+    auto& height = dimensions.Height;
+    auto& minWidth = dimensions.MinWidth;
+    auto& maxWidth = dimensions.MaxWidth;
 
-    auto& minHeight = dimensions.minHeight;
-    auto& maxHeight = dimensions.maxHeight;
-    auto display = dimensions.display;
+    auto& minHeight = dimensions.MinHeight;
+    auto& maxHeight = dimensions.MaxHeight;
+    const auto display = dimensions.Display;
     float computedWidth = NAN, computedHeight = NAN;
-    if (width.unit == CSSUnit::PX)
+    if (width.Unit == CSSUnit::Px)
     {
-        computedWidth = width.value;
+        computedWidth = width.Value;
     }
-    else if (width.unit == CSSUnit::PERCENT)
+    else if (width.Unit == CSSUnit::Percent)
     {
         computedWidth = availableWidth * (width / 100.0f);
     }
@@ -298,13 +347,13 @@ void Node::computeDimensions(float availableWidth, float availableHeight)
     {
         if (display == OuterDisplay::Block || display == OuterDisplay::Flex)
         {
-            auto& margin = _style.margin();
-            auto& padding = _style.padding();
-            auto& border = _style.border();
-            float totalHorizontal = margin.left.resolveValue(availableWidth) +
-                margin.right.resolveValue(availableWidth) +
-                padding.left + padding.right +
-                border.widthLeft + border.widthRight;
+            auto& margin = m_Style.GetMargin();
+            auto& padding = m_Style.GetPadding();
+            auto& border = m_Style.GetBorder();
+            const float totalHorizontal = margin.Left.ResolveValue(availableWidth) +
+                margin.Right.ResolveValue(availableWidth) +
+                padding.Left + padding.Right +
+                border.WidthLeft + border.WidthRight;
             if (std::isnan(availableWidth))
             {
                 computedWidth = 0.0f;
@@ -316,100 +365,106 @@ void Node::computeDimensions(float availableWidth, float availableHeight)
         }
         else if (display == OuterDisplay::Inline || display == OuterDisplay::InlineBlock)
         {
-            computedWidth = 100.0f; // Placeholder
-            for (const auto& child : children)
+            computedWidth = 100.0f; // Placeholder: known limitation, no shrink-to-fit floor yet
+            for (const auto& child : m_Children)
             {
-                child->layoutImpl(availableWidth, availableHeight);
-                DEF_NODE_LAYOUT(child);
-                DEF_NODE_STYLE(child);
-                computedWidth = std::max(computedWidth, childLayout.computedWidth +
-                                         childStyle.margin().left.resolveValue(0) + childStyle.margin().
-                                         right.resolveValue(0));
+                child->LayoutImpl(ctx, availableWidth, availableHeight);
+                auto& childLayout = child->m_Layout;
+                auto& childStyle = child->m_Style;
+                computedWidth = std::max(computedWidth, childLayout.ComputedWidth +
+                                         childStyle.GetMargin().Left.ResolveValue(0) + childStyle.GetMargin().
+                                         Right.ResolveValue(0));
             }
         }
     }
-    auto& stylePadding = _style.padding();
-    auto& styleBorder = _style.border();
-    float horizontalPadding = stylePadding.left + stylePadding.right +
-        styleBorder.widthLeft + styleBorder.widthRight;
-    float verticalPadding = stylePadding.top + stylePadding.bottom +
-        styleBorder.widthTop + styleBorder.widthBottom;
+    auto& stylePadding = m_Style.GetPadding();
+    auto& styleBorder = m_Style.GetBorder();
+    const float horizontalPadding = stylePadding.Left + stylePadding.Right +
+        styleBorder.WidthLeft + styleBorder.WidthRight;
+    const float verticalPadding = stylePadding.Top + stylePadding.Bottom +
+        styleBorder.WidthTop + styleBorder.WidthBottom;
 
-    // Explicit PX/PERCENT sizes are border-box (padding+border inset the content); the AUTO
+    // Explicit Px/Percent sizes are border-box (padding+border inset the content); the AUTO
     // branches produced a content size, so only those re-add padding+border below.
-    const bool widthIsExplicit = (width.unit == CSSUnit::PX || width.unit == CSSUnit::PERCENT);
-    const bool heightIsExplicit = (height.unit == CSSUnit::PX || height.unit == CSSUnit::PERCENT);
+    const bool widthIsExplicit = (width.Unit == CSSUnit::Px || width.Unit == CSSUnit::Percent);
+    const bool heightIsExplicit = (height.Unit == CSSUnit::Px || height.Unit == CSSUnit::Percent);
 
     if (!std::isnan(computedWidth))
     {
-        if (minWidth.unit != CSSUnit::AUTO)
-            computedWidth = std::max(computedWidth, minWidth.resolveValue(availableWidth));
-        if (maxWidth.unit != CSSUnit::AUTO)
-            computedWidth = std::min(computedWidth, maxWidth.resolveValue(availableWidth));
+        if (!ignoreMinMax)
+        {
+            if (minWidth.Unit != CSSUnit::Auto)
+                computedWidth = std::max(computedWidth, minWidth.ResolveValue(availableWidth));
+            if (maxWidth.Unit != CSSUnit::Auto)
+                computedWidth = std::min(computedWidth, maxWidth.ResolveValue(availableWidth));
+        }
         if (!widthIsExplicit)
             computedWidth += horizontalPadding;
     }
 
 
-    if (height.unit == CSSUnit::PX)
+    if (height.Unit == CSSUnit::Px)
     {
-        computedHeight = height.value;
+        computedHeight = height.Value;
     }
-    else if (height.unit == CSSUnit::PERCENT)
+    else if (height.Unit == CSSUnit::Percent)
     {
         if (!std::isnan(availableHeight))
         {
-            computedHeight = availableHeight * (height.value / 100.0f);
+            computedHeight = availableHeight * (height.Value / 100.0f);
         }
     }
     if (!std::isnan(computedHeight))
     {
-        if (minHeight.unit != CSSUnit::AUTO)
-            computedHeight = std::max(computedHeight, minHeight.resolveValue(availableHeight));
-        if (maxHeight.unit != CSSUnit::AUTO)
-            computedHeight = std::min(computedHeight, maxHeight.resolveValue(availableHeight));
+        if (!ignoreMinMax)
+        {
+            if (minHeight.Unit != CSSUnit::Auto)
+                computedHeight = std::max(computedHeight, minHeight.ResolveValue(availableHeight));
+            if (maxHeight.Unit != CSSUnit::Auto)
+                computedHeight = std::min(computedHeight, maxHeight.ResolveValue(availableHeight));
+        }
         if (!heightIsExplicit)
             computedHeight += verticalPadding;
     }
 
-    _layout.computedWidth = computedWidth;
-    _layout.computedHeight = computedHeight;
+    m_Layout.ComputedWidth = computedWidth;
+    m_Layout.ComputedHeight = computedHeight;
 }
 
 
-void Node::positionOutOfFlowChild(Node* ancestor, float refWidth, float refHeight)
+void Node::PositionOutOfFlowChild(Node* ancestor, float refWidth, float refHeight)
 {
     // Containing block's padding-edge origin.
     float cbX = 0.0f, cbY = 0.0f;
     if (ancestor)
     {
-        cbX = ancestor->_layout.computedX
-            + ancestor->_style.border().widthLeft
-            + ancestor->_style.padding().left;
+        cbX = ancestor->m_Layout.ComputedX
+            + ancestor->m_Style.GetBorder().WidthLeft
+            + ancestor->m_Style.GetPadding().Left;
 
-        cbY = ancestor->_layout.computedY
-            + ancestor->_style.border().widthTop
-            + ancestor->_style.padding().top;
+        cbY = ancestor->m_Layout.ComputedY
+            + ancestor->m_Style.GetBorder().WidthTop
+            + ancestor->m_Style.GetPadding().Top;
     }
 
-    auto& dimensions = _style.dimensions();
-    const bool hasLeft = dimensions.left.unit != CSSUnit::AUTO;
-    const bool hasRight = dimensions.right.unit != CSSUnit::AUTO;
-    const bool hasTop = dimensions.top.unit != CSSUnit::AUTO;
-    const bool hasBottom = dimensions.bottom.unit != CSSUnit::AUTO;
+    auto& dimensions = m_Style.GetDimensions();
+    const bool hasLeft = dimensions.Left.Unit != CSSUnit::Auto;
+    const bool hasRight = dimensions.Right.Unit != CSSUnit::Auto;
+    const bool hasTop = dimensions.Top.Unit != CSSUnit::Auto;
+    const bool hasBottom = dimensions.Bottom.Unit != CSSUnit::Auto;
 
 
     if (hasLeft || hasRight)
     {
         if (hasLeft)
         {
-            _layout.computedX = cbX + dimensions.left.resolveValue(refWidth);
+            m_Layout.ComputedX = cbX + dimensions.Left.ResolveValue(refWidth);
         }
         else
         {
-            _layout.computedX = cbX + refWidth
-                - dimensions.right.resolveValue(refWidth)
-                - _layout.computedWidth;
+            m_Layout.ComputedX = cbX + refWidth
+                - dimensions.Right.ResolveValue(refWidth)
+                - m_Layout.ComputedWidth;
         }
     }
 
@@ -417,40 +472,40 @@ void Node::positionOutOfFlowChild(Node* ancestor, float refWidth, float refHeigh
     {
         if (hasTop)
         {
-            _layout.computedY = cbY + dimensions.top.resolveValue(refHeight);
+            m_Layout.ComputedY = cbY + dimensions.Top.ResolveValue(refHeight);
         }
         else
         {
-            _layout.computedY = cbY + refHeight
-                - dimensions.bottom.resolveValue(refHeight)
-                - _layout.computedHeight;
+            m_Layout.ComputedY = cbY + refHeight
+                - dimensions.Bottom.ResolveValue(refHeight)
+                - m_Layout.ComputedHeight;
         }
     }
 
     // Fall back to the static position when neither offset is set.
     if (!hasLeft && !hasRight)
     {
-        _layout.computedX = cbX;
+        m_Layout.ComputedX = cbX;
     }
 
     if (!hasTop && !hasBottom)
     {
-        _layout.computedY = cbY;
+        m_Layout.ComputedY = cbY;
     }
 }
 
-void Node::handleStickyPosition(float refWidth, float refHeight)
+void Node::HandleStickyPosition(float /*refWidth*/, float refHeight)
 {
     // TODO: wire a real scroll offset; sticky is only clamped within the parent bounds for now.
-    float scrollY = 0;
+    const float scrollY = 0;
 
-    auto& dimensions = _style.dimensions();
-    float stickyTop = dimensions.top.resolveValue(refHeight);
+    auto& dimensions = m_Style.GetDimensions();
+    const float stickyTop = dimensions.Top.ResolveValue(refHeight);
 
-    float parentTop = _layout.computedY;
-    float parentBottom = _layout.computedY + _layout.computedHeight;
+    const float parentTop = m_Layout.ComputedY;
+    const float parentBottom = m_Layout.ComputedY + m_Layout.ComputedHeight;
 
     float newStickyY = std::max(parentTop + stickyTop, scrollY + stickyTop);
-    newStickyY = std::min(newStickyY, parentBottom - _layout.computedHeight);
-    _layout.computedY = newStickyY;
+    newStickyY = std::min(newStickyY, parentBottom - m_Layout.ComputedHeight);
+    m_Layout.ComputedY = newStickyY;
 }

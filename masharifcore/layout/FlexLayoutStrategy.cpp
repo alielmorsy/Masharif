@@ -1,669 +1,624 @@
 #include "FlexLayoutStrategy.h"
 
+#include "LayoutContext.h"
 #include "Node.h"
 #include "masharifcore/structure/CSSValue.h"
 #include "masharifcore/structure/Justify.h"
+
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <limits>
+#include <ranges>
+
 using namespace masharif;
 
-static float calculatedNeededMargin(bool isRow, const MarginEdge &margin, float mainAxisSize) {
-    float neededMargin = 0;
-    if (isRow) {
-        neededMargin = margin.left.resolveValue(mainAxisSize) + margin.right.resolveValue(mainAxisSize);
-    } else {
-        neededMargin = margin.top.resolveValue(mainAxisSize) + margin.bottom.resolveValue(mainAxisSize);
+namespace {
+    float NeededMainAxisMargin(const bool isRow, const MarginEdge &margin, const float mainAxisSize) {
+        if (isRow)
+            return margin.Left.ResolveValue(mainAxisSize) + margin.Right.ResolveValue(mainAxisSize);
+        return margin.Top.ResolveValue(mainAxisSize) + margin.Bottom.ResolveValue(mainAxisSize);
     }
-    return neededMargin;
 }
 
-void FlexLayoutStrategy::layout(float availableWidth, float availableHeight) {
-    auto &children = container->children;
-    float totalMainAxisSize = 0;
-    float totalCrossAxisSize = 0;
+/// One flex solve for one container. Phases run in CSS order; the recursive phases
+/// (MeasureItemBases, RelayoutItemsAtDefiniteSize) re-enter child solves that share the
+/// same context arenas, so they follow the ArenaSlice re-indexing rule strictly.
+class FlexLayoutStrategy::Solver {
+public:
+    Solver(Node &container, LayoutContext &ctx,
+           const float availableWidth, const float availableHeight)
+        : m_Container(container),
+          m_Ctx(ctx),
+          m_Style(container.GetStyle()),
+          m_Layout(container.GetLayout()),
+          m_IsRow(m_Style.GetFlex().IsRow()),
+          m_IsReverse(m_Style.GetFlex().IsReverse()),
+          m_AvailableWidth(availableWidth),
+          m_AvailableHeight(availableHeight),
+          m_Items(ctx.InFlowItems),
+          m_Lines(ctx.Lines) {
+    }
 
-    DEF_NODE_LAYOUT(container);
-    DEF_NODE_STYLE(container);
+    void Run() {
+        CollectAndOrderItems();
+        ShrinkAvailableToContentBox();
+        MeasureItemBases();
+        ResolveContainerSize();
 
-    const bool isRow = containerStyle.flex().isRow();
-    const bool isReverse = containerStyle.flex().isReverse();
+        const float availableMainAxisSize = m_IsRow ? m_AvailableWidth : m_AvailableHeight;
+        float crossPos = m_IsRow
+                             ? m_Style.GetPadding().Top.ResolveValue(m_AvailableWidth)
+                             : m_Style.GetPadding().Left.ResolveValue(m_AvailableWidth);
 
-    // Separate out-of-flow children and build the in-flow list.
-    std::vector<Node *> inFlowChildren;
-    inFlowChildren.reserve(children.size());
-    for (auto &child: children) {
-        auto pos = child->style().dimensions().position;
-        if (pos != PositionType::Static && pos != PositionType::Relative) {
-            container->outOfFlowChildren.push_back(child);
-        } else {
-            inFlowChildren.push_back(child.get());
+        // Invariant across the line loop: the container's main size and paddings do not
+        // change while lines are built and placed.
+        const float containerMainSize = m_IsRow ? m_Layout.ComputedWidth : m_Layout.ComputedHeight;
+        const auto &padding = m_Style.GetPadding();
+        const float padStart = m_IsRow
+                                   ? padding.Left.ResolveValue(containerMainSize)
+                                   : padding.Top.ResolveValue(containerMainSize);
+        const float padEnd = m_IsRow
+                                 ? padding.Right.ResolveValue(containerMainSize)
+                                 : padding.Bottom.ResolveValue(containerMainSize);
+        const float availableSpace = containerMainSize - padStart - padEnd;
+
+        while (m_NextItem < m_Items.Count()) {
+            m_Lines.Append(BuildLine(availableMainAxisSize));
+            FlexLine &line = m_Lines[m_Lines.Count() - 1];
+            ResolveFlexibleLengths(line, availableSpace);
+            PositionLineOnMainAxis(line, availableSpace, containerMainSize, padStart, padEnd, crossPos);
+            crossPos += line.CrossSize;
+        }
+
+        AlignLinesOnCrossAxis();
+        RelayoutItemsAtDefiniteSize();
+    }
+
+private:
+    [[nodiscard]] std::size_t LineItemCount(const FlexLine &line) const noexcept {
+        return line.ItemEnd - line.ItemBegin;
+    }
+
+    /// Split children into the in-flow item slice and the container's out-of-flow list,
+    /// then order the items by CSS `order` when any item overrides the default.
+    void CollectAndOrderItems() {
+        for (auto &child: m_Container.m_Children) {
+            const auto pos = child->GetStyle().GetDimensions().Position;
+            const auto display = child->GetStyle().GetDimensions().Display;
+            if (pos != PositionType::Static && pos != PositionType::Relative) {
+                m_Container.m_OutOfFlowChildren.push_back(child);
+            } else if (display != OuterDisplay::None) {
+                m_Items.Append(child.get());
+            }
+        }
+
+        if (std::ranges::any_of(m_Items.begin(), m_Items.end(),
+                                [](Node *n) { return n->GetStyle().GetFlex().Order != 0; })) {
+            std::ranges::stable_sort(m_Items.begin(), m_Items.end(), {},
+                                     [](Node *n) { return n->GetStyle().GetFlex().Order; });
         }
     }
 
-    // Stable sort by CSS order, preserving DOM order for equal values.
-    std::stable_sort(inFlowChildren.begin(), inFlowChildren.end(),
-                     [](Node *a, Node *b) {
-                         return a->style().flex().order < b->style().flex().order;
-                     });
-
-    // Children size against the container's CONTENT box (border box minus its own
-    // padding+border), so a 100%-sized child of a padded container doesn't overflow. AUTO-sized
-    // containers have no definite box yet, so they keep the parent-provided available space.
-    {
-        auto &cPad = containerStyle.padding();
-        auto &cBor = containerStyle.border();
-        const auto &cDim = containerStyle.dimensions();
-        const bool widthExplicit = (cDim.width.unit == CSSUnit::PX || cDim.width.unit == CSSUnit::PERCENT);
-        const bool heightExplicit = (cDim.height.unit == CSSUnit::PX || cDim.height.unit == CSSUnit::PERCENT);
-        if (widthExplicit && !std::isnan(containerLayout.computedWidth)) {
-            availableWidth = containerLayout.computedWidth
-                             - cPad.left.value - cPad.right.value
-                             - cBor.widthLeft.value - cBor.widthRight.value;
+    /// Shrink available space to the container's content box when the container has an
+    /// explicit size, so 100%-sized children of a padded container don't overflow.
+    void ShrinkAvailableToContentBox() {
+        const auto &pad = m_Style.GetPadding();
+        const auto &bor = m_Style.GetBorder();
+        const auto &dim = m_Style.GetDimensions();
+        const bool widthExplicit = dim.Width.Unit == CSSUnit::Px || dim.Width.Unit == CSSUnit::Percent;
+        const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
+        if (widthExplicit && !std::isnan(m_Layout.ComputedWidth)) {
+            m_AvailableWidth = m_Layout.ComputedWidth
+                               - pad.Left.Value - pad.Right.Value
+                               - bor.WidthLeft.Value - bor.WidthRight.Value;
         }
-        if (heightExplicit && !std::isnan(containerLayout.computedHeight)) {
-            availableHeight = containerLayout.computedHeight
-                              - cPad.top.value - cPad.bottom.value
-                              - cBor.widthTop.value - cBor.widthBottom.value;
+        if (heightExplicit && !std::isnan(m_Layout.ComputedHeight)) {
+            m_AvailableHeight = m_Layout.ComputedHeight
+                                - pad.Top.Value - pad.Bottom.Value
+                                - bor.WidthTop.Value - bor.WidthBottom.Value;
         }
     }
 
-    // Compute the flex basis of each in-flow child.
-    for (auto &child: inFlowChildren) {
-        float childAvailableWidth = availableWidth;
-        float childAvailableHeight = availableHeight;
+    /// Compute each item's flex basis. Min/max constraints are suppressed here
+    /// (ignoreMinMax) because the flex algorithm applies them in ResolveFlexibleLengths.
+    void MeasureItemBases() {
+        const std::size_t count = m_Items.Count();
+        for (std::size_t i = 0; i < count; ++i) {
+            Node *child = m_Items[i]; // copy out: the recursive solve below may grow the arena
 
-        const auto &dim = child->style().dimensions();
-        if (isRow && dim.width.unit == CSSUnit::AUTO) childAvailableWidth = std::numeric_limits<float>::quiet_NaN();
-        if (!isRow && dim.height.unit == CSSUnit::AUTO) childAvailableHeight = std::numeric_limits<float>::quiet_NaN();
+            float childAvailW = m_AvailableWidth;
+            float childAvailH = m_AvailableHeight;
+            const auto &dim = child->GetStyle().GetDimensions();
+            if (m_IsRow && dim.Width.Unit == CSSUnit::Auto)
+                childAvailW = std::numeric_limits<float>::quiet_NaN();
+            if (!m_IsRow && dim.Height.Unit == CSSUnit::Auto)
+                childAvailH = std::numeric_limits<float>::quiet_NaN();
 
-        // Measure pure content size for the flex basis with min/max disabled. modify<>() dirties
-        // the child, so snapshot/restore the flag — this measurement must not count as a change.
-        const bool savedDirty = child->style().dirty;
-        auto &childDims = child->style().modify<Dimensions>();
-        auto savedMinWidth = childDims.minWidth;
-        auto savedMinHeight = childDims.minHeight;
-        auto savedMaxWidth = childDims.maxWidth;
-        auto savedMaxHeight = childDims.maxHeight;
+            child->LayoutImpl(m_Ctx, childAvailW, childAvailH, /*ignoreMinMax=*/true);
 
-        childDims.minWidth = {0};
-        childDims.minHeight = {0};
-        childDims.maxWidth = {};
-        childDims.maxHeight = {};
+            auto &childLayout = child->GetLayout();
+            const auto &childStyle = child->GetStyle();
 
-        child->style().dirty = savedDirty;
-        child->layoutImpl(childAvailableWidth, childAvailableHeight);
+            const float basisRef = m_IsRow ? m_AvailableWidth : m_AvailableHeight;
+            if (childStyle.GetFlex().FlexBasis.Unit == CSSUnit::Auto) {
+                const float resolved = m_IsRow ? childLayout.ComputedWidth : childLayout.ComputedHeight;
+                childLayout.ComputedFlexBasis = std::isnan(resolved) ? 0.0f : resolved;
+            } else {
+                const auto &pad = childStyle.GetPadding();
+                const auto &[wTop, wBottom, wLeft, wRight] = childStyle.GetBorder();
+                const float pb = m_IsRow
+                                     ? pad.Left.Value + pad.Right.Value + wLeft.Value + wRight.Value
+                                     : pad.Top.Value + pad.Bottom.Value + wTop.Value + wBottom.Value;
+                childLayout.ComputedFlexBasis = childStyle.GetFlex().FlexBasis.ResolveValue(basisRef) + pb;
+            }
 
-        childDims.minWidth = savedMinWidth;
-        childDims.minHeight = savedMinHeight;
-        childDims.maxWidth = savedMaxWidth;
-        childDims.maxHeight = savedMaxHeight;
-
-        DEF_NODE_LAYOUT(child);
-        DEF_NODE_STYLE(child);
-
-        float basisReference = isRow ? availableWidth : availableHeight;
-        if (childStyle.flex().flexBasis.unit == CSSUnit::AUTO) {
-            float resolved = isRow ? childLayout.computedWidth : childLayout.computedHeight;
-            childLayout.computedFlexBasis = std::isnan(resolved) ? 0 : resolved;
-        } else {
-            auto &p = childStyle.padding();
-            const auto &[widthTop, widthBottom, widthLeft, widthRight] = childStyle.border();
-            float paddingBorder = isRow
-                                      ? p.left.value + p.right.value + widthLeft.value + widthRight.value
-                                      : p.top.value + p.bottom.value + widthTop.value + widthBottom.value;
-            childLayout.computedFlexBasis = childStyle.flex().flexBasis.resolveValue(basisReference) + paddingBorder;
+            m_TotalMainSize += childLayout.ComputedFlexBasis;
+            m_MaxCrossSize = std::max(m_MaxCrossSize,
+                                      m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth);
         }
-
-        totalMainAxisSize += childLayout.computedFlexBasis;
-        totalCrossAxisSize = std::max(totalCrossAxisSize,
-                                      isRow ? childLayout.computedHeight : childLayout.computedWidth);
     }
 
-    auto &p = containerStyle.padding();
-    auto &b = containerStyle.border();
-    float paddingBorderRow = p.left.value + p.right.value + b.widthLeft.value + b.widthRight.value;
-    float paddingBorderCol = p.top.value + p.bottom.value + b.widthTop.value + b.widthBottom.value;
+    /// Resolve NaN available space and shrink-wrap an AUTO main axis to content
+    /// (unless the parent has already fixed this node's size — MainSizeIsDefinite).
+    void ResolveContainerSize() {
+        const auto &p = m_Style.GetPadding();
+        const auto &b = m_Style.GetBorder();
+        const float pbRow = p.Left.Value + p.Right.Value + b.WidthLeft.Value + b.WidthRight.Value;
+        const float pbCol = p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value;
 
-    if (std::isnan(availableWidth)) {
-        if (containerStyle.dimensions().width.unit == CSSUnit::AUTO) {
-            containerLayout.computedWidth = (isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderRow;
+        if (std::isnan(m_AvailableWidth)) {
+            if (m_Style.GetDimensions().Width.Unit == CSSUnit::Auto)
+                m_Layout.ComputedWidth = (m_IsRow ? m_TotalMainSize : m_MaxCrossSize) + pbRow;
+            m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
+        } else if (m_IsRow && m_Style.GetDimensions().Width.Unit == CSSUnit::Auto
+                   && !m_Container.MainSizeIsDefinite()) {
+            m_Layout.ComputedWidth = m_TotalMainSize + pbRow;
+            m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
+        } else if (std::isnan(m_Layout.ComputedWidth)) {
+            m_Layout.ComputedWidth = m_AvailableWidth;
         }
-        availableWidth = containerLayout.computedWidth - paddingBorderRow;
-    } else if (isRow && containerStyle.dimensions().width.unit == CSSUnit::AUTO
-               && !container->mainSizeIsDefinite()) {
-        // AUTO main axis (Row): shrink-to-fit content instead of filling the parent's width.
-        // Skipped in the definite-size re-layout, else a cross-stretched grow Row re-collapses.
-        containerLayout.computedWidth = totalMainAxisSize + paddingBorderRow;
-        availableWidth = containerLayout.computedWidth - paddingBorderRow;
-    } else if (std::isnan(containerLayout.computedWidth)) {
-        containerLayout.computedWidth = availableWidth;
+
+        if (std::isnan(m_AvailableHeight)) {
+            if (m_Style.GetDimensions().Height.Unit == CSSUnit::Auto)
+                m_Layout.ComputedHeight = (!m_IsRow ? m_TotalMainSize : m_MaxCrossSize) + pbCol;
+            m_AvailableHeight = m_Layout.ComputedHeight - pbCol;
+        } else if (!m_IsRow && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto
+                   && !m_Container.MainSizeIsDefinite()) {
+            m_Layout.ComputedHeight = m_TotalMainSize + pbCol;
+            m_AvailableHeight = m_Layout.ComputedHeight - pbCol;
+        } else if (std::isnan(m_Layout.ComputedHeight)) {
+            m_Layout.ComputedHeight = m_AvailableHeight;
+        }
     }
 
-    if (std::isnan(availableHeight)) {
-        if (containerStyle.dimensions().height.unit == CSSUnit::AUTO) {
-            containerLayout.computedHeight = (!isRow ? totalMainAxisSize : totalCrossAxisSize) + paddingBorderCol;
+    /// Greedily pack items into one flex line starting at m_NextItem. Advances the
+    /// cursor past every item consumed; on wrap it is left at the next line's first item.
+    [[nodiscard]] FlexLine BuildLine(const float lineMainSize) {
+        const bool isWrap = m_Style.GetFlex().Wrap == FlexWrap::Wrap ||
+                            m_Style.GetFlex().Wrap == FlexWrap::WrapReverse;
+        const auto &gaps = m_Style.GetFlex().Gaps;
+        const float gapSize = m_IsRow
+                                  ? gaps.Column.ResolveValue(m_Layout.ComputedWidth)
+                                  : gaps.Row.ResolveValue(m_Layout.ComputedHeight);
+
+        float takenSize = 0;
+        bool foundFirst = false;
+        float totalFlexGrow = 0, totalFlexShrinkScaled = 0;
+        int numberOfAutoMargin = 0;
+        float totalCrossSize = 0;
+
+        const std::size_t itemBegin = m_NextItem;
+        const std::size_t total = m_Items.Count();
+
+        for (; m_NextItem < total; ++m_NextItem) {
+            Node *child = m_Items[m_NextItem];
+            const auto &childStyle = child->GetStyle();
+            const auto &childLayout = child->GetLayout();
+
+            const auto &margin = childStyle.GetMargin();
+            if (m_IsRow) {
+                if (margin.Left.Unit == CSSUnit::Auto) numberOfAutoMargin++;
+                if (margin.Right.Unit == CSSUnit::Auto) numberOfAutoMargin++;
+                totalCrossSize = std::max(totalCrossSize, childLayout.ComputedHeight);
+            } else {
+                totalCrossSize = std::max(totalCrossSize, childLayout.ComputedWidth);
+                if (margin.Top.Unit == CSSUnit::Auto) numberOfAutoMargin++;
+                if (margin.Bottom.Unit == CSSUnit::Auto) numberOfAutoMargin++;
+            }
+
+            const float neededMargin = NeededMainAxisMargin(m_IsRow, margin, lineMainSize);
+            float newTaken = takenSize + neededMargin + childLayout.ComputedFlexBasis;
+            if (foundFirst) newTaken += gapSize;
+
+            if (newTaken > lineMainSize && foundFirst && isWrap)
+                break; // the cursor is NOT advanced — this item opens the next line
+
+            foundFirst = true;
+            totalFlexGrow += childStyle.GetFlex().FlexGrow;
+            totalFlexShrinkScaled += childStyle.GetFlex().FlexShrink * childLayout.ComputedFlexBasis;
+            takenSize = newTaken;
         }
-        availableHeight = containerLayout.computedHeight - paddingBorderCol;
-    } else if (!isRow && containerStyle.dimensions().height.unit == CSSUnit::AUTO
-               && !container->mainSizeIsDefinite()) {
-        // AUTO main axis (Column): shrink-to-fit content instead of filling the parent's height
-        // (keeps columns at content height for align-items:flex-end). Skipped in definite re-layout.
-        containerLayout.computedHeight = totalMainAxisSize + paddingBorderCol;
-        availableHeight = containerLayout.computedHeight - paddingBorderCol;
-    } else if (std::isnan(containerLayout.computedHeight)) {
-        containerLayout.computedHeight = availableHeight;
+
+        return {
+            .ItemBegin = itemBegin,
+            .ItemEnd = m_NextItem,
+            .NumberOfAutoMargin = numberOfAutoMargin,
+            .TakenSize = takenSize,
+            .TotalFlexGrow = totalFlexGrow,
+            .TotalFlexShrinkScaledFactors = totalFlexShrinkScaled,
+            .CrossSize = totalCrossSize
+        };
     }
 
-    // Build flex lines, resolve each, then position its items.
-    auto currentIterator = inFlowChildren.begin();
-    auto end = inFlowChildren.end();
-    float availableMainAxisSize = isRow ? availableWidth : availableHeight;
-    float crossPos = isRow
-                         ? containerStyle.padding().top.resolveValue(availableWidth)
-                         : containerStyle.padding().left.resolveValue(availableWidth);
-    std::vector<FlexLine> lines;
+    /// CSS flexible-length resolution: distribute free space by grow/shrink factors,
+    /// clamp to min/max, freeze violators, repeat until stable.
+    void ResolveFlexibleLengths(const FlexLine &line, const float availableSpace) {
+        const std::size_t n = LineItemCount(line);
+        if (n == 0) return;
 
-    while (currentIterator != end) {
-        FlexLine &line = lines.emplace_back(calculateFlexLine(currentIterator, end, availableMainAxisSize));
+        const float remainingSpace = availableSpace - line.TakenSize;
+        if (line.NumberOfAutoMargin > 0) return;
 
-        float containerMainSize = isRow ? containerLayout.computedWidth : containerLayout.computedHeight;
-        auto &padding = containerStyle.padding();
-        float paddingStart = isRow
-                                 ? padding.left.resolveValue(containerMainSize)
-                                 : padding.top.resolveValue(containerMainSize);
-        float paddingEnd = isRow
-                               ? padding.right.resolveValue(containerMainSize)
-                               : padding.bottom.resolveValue(containerMainSize);
-        float availableSpace = containerMainSize - paddingStart - paddingEnd;
+        const bool isGrowing = remainingSpace > 0 && line.TotalFlexGrow > 0;
+        const bool isShrinking = remainingSpace < 0 && line.TotalFlexShrinkScaledFactors != 0;
 
-        resolveFlexibleLengths(line, availableSpace, isRow, availableWidth, availableHeight);
+        ArenaSlice<float> baseSizes(m_Ctx.BaseSizes);
+        ArenaSlice<std::uint8_t> frozen(m_Ctx.Frozen);
+        baseSizes.Resize(n);
+        frozen.Resize(n);
 
-        // Recompute remaining space after flex resolution.
+        for (std::size_t i = 0; i < n; i++) {
+            Node *child = m_Items[line.ItemBegin + i];
+            baseSizes[i] = child->GetLayout().ComputedFlexBasis;
+            const auto &flex = child->GetStyle().GetFlex();
+            frozen[i] = static_cast<std::uint8_t>(
+                (isGrowing && flex.FlexGrow == 0) || (isShrinking && flex.FlexShrink == 0) ? 1 : 0);
+        }
+
+        const float gapSize = m_IsRow
+                                  ? m_Style.GetFlex().Gaps.Column.ResolveValue(m_Layout.ComputedWidth)
+                                  : m_Style.GetFlex().Gaps.Row.ResolveValue(m_Layout.ComputedHeight);
+
+        for (;;) {
+            // Single pass: compute free space + sum unfrozen factors.
+            float unfrozenFlexGrow = 0;
+            float unfrozenScaledShrink = 0;
+            float freeSpace = availableSpace;
+            if (n > 1) freeSpace -= static_cast<float>(n - 1) * gapSize;
+
+            for (std::size_t i = 0; i < n; i++) {
+                Node *child = m_Items[line.ItemBegin + i];
+                if (frozen[i]) {
+                    freeSpace -= child->GetLayout().ComputedFlexBasis; // frozen: current (clamped) basis
+                } else {
+                    const auto &flex = child->GetStyle().GetFlex();
+                    unfrozenFlexGrow += flex.FlexGrow;
+                    unfrozenScaledShrink += flex.FlexShrink * baseSizes[i];
+                    freeSpace -= baseSizes[i]; // unfrozen: original basis
+                }
+            }
+
+            // Single pass: distribute free space + clamp to min/max + freeze violators.
+            bool anyNewFreezes = false;
+            for (std::size_t i = 0; i < n; i++) {
+                if (frozen[i]) continue;
+                Node *child = m_Items[line.ItemBegin + i];
+
+                float newSize = baseSizes[i];
+                if (isGrowing && unfrozenFlexGrow > 0) {
+                    newSize += (child->GetStyle().GetFlex().FlexGrow / unfrozenFlexGrow) * freeSpace;
+                } else if (isShrinking && unfrozenScaledShrink != 0) {
+                    const float sf = child->GetStyle().GetFlex().FlexShrink * baseSizes[i];
+                    newSize += (sf / unfrozenScaledShrink) * freeSpace;
+                }
+
+                const auto &dims = child->GetStyle().GetDimensions();
+                float clamped = newSize;
+                if (m_IsRow) {
+                    if (dims.MaxWidth.Unit != CSSUnit::Auto)
+                        clamped = std::min(clamped, dims.MaxWidth.ResolveValue(m_AvailableWidth));
+                    if (dims.MinWidth.Unit != CSSUnit::Auto)
+                        clamped = std::max(clamped, dims.MinWidth.ResolveValue(m_AvailableWidth));
+                } else {
+                    if (dims.MaxHeight.Unit != CSSUnit::Auto)
+                        clamped = std::min(clamped, dims.MaxHeight.ResolveValue(m_AvailableHeight));
+                    if (dims.MinHeight.Unit != CSSUnit::Auto)
+                        clamped = std::max(clamped, dims.MinHeight.ResolveValue(m_AvailableHeight));
+                }
+
+                if (clamped != newSize) {
+                    frozen[i] = 1;
+                    anyNewFreezes = true;
+                    newSize = clamped;
+                }
+                child->GetLayout().ComputedFlexBasis = newSize;
+            }
+
+            if (!anyNewFreezes) break;
+        }
+    }
+
+    /// Place the line's items along the main axis: justify-content offset/gap, auto
+    /// margins, then per-item local position and main size.
+    void PositionLineOnMainAxis(const FlexLine &line, const float availableSpace,
+                                const float containerMainSize, const float padStart,
+                                const float padEnd, const float crossPos) {
+        const std::size_t itemCount = LineItemCount(line);
+
         float takenAfterResolve = 0;
-        for (auto &child: line.flexItems) {
-            takenAfterResolve += child->layout().computedFlexBasis;
-        }
-        float originalRemainingSpace = availableSpace - line.takenSize;
-        float remainingSpace = availableSpace - takenAfterResolve;
+        for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i)
+            takenAfterResolve += m_Items[i]->GetLayout().ComputedFlexBasis;
 
-        float gap = isRow
-                        ? containerStyle.flex().gap.column.resolveValue(availableWidth)
-                        : containerStyle.flex().gap.row.resolveValue(availableHeight);
-        float mainStartPos = paddingStart;
-        if (isReverse) {
-            mainStartPos = containerMainSize - paddingEnd;
-        }
+        const float originalRemainingSpace = availableSpace - line.TakenSize;
+        const float remainingSpace = availableSpace - takenAfterResolve;
 
-        // Justify-content positioning
+        float gap = m_IsRow
+                        ? m_Style.GetFlex().Gaps.Column.ResolveValue(m_AvailableWidth)
+                        : m_Style.GetFlex().Gaps.Row.ResolveValue(m_AvailableHeight);
+
+        const float mainStartPos = m_IsReverse ? (containerMainSize - padEnd) : padStart;
+
         float mainOffset = 0;
-        switch (containerStyle.flex().justifyContent) {
+        switch (m_Style.GetFlex().Justify) {
             case JustifyContent::FlexStart:
-                mainOffset += 0;
                 break;
             case JustifyContent::FlexEnd:
                 mainOffset += remainingSpace;
                 break;
             case JustifyContent::FlexCenter:
-                mainOffset += remainingSpace / 2;
+                mainOffset += remainingSpace / 2.0f;
                 break;
             case JustifyContent::SpaceBetween:
-                if (line.flexItems.size() > 1) {
-                    gap += remainingSpace / (line.flexItems.size() - 1);
-                }
+                if (itemCount > 1)
+                    gap += remainingSpace / static_cast<float>(itemCount - 1);
                 break;
             case JustifyContent::SpaceAround:
-                mainOffset += remainingSpace / (line.flexItems.size() * 2);
-                gap += remainingSpace / line.flexItems.size();
+                mainOffset += remainingSpace / static_cast<float>(itemCount * 2);
+                gap += remainingSpace / static_cast<float>(itemCount);
                 break;
             case JustifyContent::SpaceEvenly:
-                mainOffset += remainingSpace / (line.flexItems.size() + 1);
-                gap += remainingSpace / (line.flexItems.size() + 1);
+                mainOffset += remainingSpace / static_cast<float>(itemCount + 1);
+                gap += remainingSpace / static_cast<float>(itemCount + 1);
                 break;
             case JustifyContent::Stretch:
                 break;
         }
 
-        int autoMarginItems = line.numberOfAutoMargin;
+        int autoMarginItems = line.NumberOfAutoMargin;
         float autoRemainingSpace = originalRemainingSpace;
-        float currentPosition = mainStartPos + (isReverse ? -mainOffset : mainOffset);
+        float currentPosition = mainStartPos + (m_IsReverse ? -mainOffset : mainOffset);
 
-        for (auto child: line.flexItems) {
-            DEF_NODE_LAYOUT(child);
-            DEF_NODE_STYLE(child);
+        for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
+            Node *child = m_Items[i];
+            auto &childLayout = child->GetLayout();
+            const auto &childStyle = child->GetStyle();
+
+            const bool hasAutoMargins =
+                    (m_IsRow && (childStyle.GetMargin().Left.Unit == CSSUnit::Auto ||
+                                 childStyle.GetMargin().Right.Unit == CSSUnit::Auto)) ||
+                    (!m_IsRow && (childStyle.GetMargin().Top.Unit == CSSUnit::Auto ||
+                                  childStyle.GetMargin().Bottom.Unit == CSSUnit::Auto));
 
             float marginStart = 0, marginEnd = 0;
-            bool hasAutoMargins = (isRow && (childStyle.margin().left.unit == CSSUnit::AUTO ||
-                                             childStyle.margin().right.unit == CSSUnit::AUTO)) ||
-                                  (!isRow && (childStyle.margin().top.unit == CSSUnit::AUTO ||
-                                              childStyle.margin().bottom.unit == CSSUnit::AUTO));
-
             if (hasAutoMargins) {
-                int autoCount = 0;
-                if (isRow) {
-                    if (childStyle.margin().left.unit == CSSUnit::AUTO) autoCount++;
-                    if (childStyle.margin().right.unit == CSSUnit::AUTO) autoCount++;
-                } else {
-                    if (childStyle.margin().top.unit == CSSUnit::AUTO) autoCount++;
-                    if (childStyle.margin().bottom.unit == CSSUnit::AUTO) autoCount++;
-                }
-
-                float itemSpace = autoMarginItems > 0 ? autoRemainingSpace / autoMarginItems : 0;
-                marginStart = autoCount == 2 ? itemSpace : (autoCount == 1 ? itemSpace : 0);
-                marginEnd = autoCount == 2 ? itemSpace : (autoCount == 1 ? itemSpace : 0);
-
+                const float itemSpace = autoMarginItems > 0 ? autoRemainingSpace / autoMarginItems : 0.0f;
+                marginStart = itemSpace;
+                marginEnd = itemSpace;
                 autoRemainingSpace -= itemSpace;
                 autoMarginItems--;
             } else {
-                marginStart = isRow
-                                  ? childStyle.margin().left.resolveValue(availableWidth)
-                                  : childStyle.margin().top.resolveValue(availableHeight);
-                marginEnd = isRow
-                                ? childStyle.margin().right.resolveValue(availableWidth)
-                                : childStyle.margin().bottom.resolveValue(availableHeight);
+                marginStart = m_IsRow
+                                  ? childStyle.GetMargin().Left.ResolveValue(m_AvailableWidth)
+                                  : childStyle.GetMargin().Top.ResolveValue(m_AvailableHeight);
+                marginEnd = m_IsRow
+                                ? childStyle.GetMargin().Right.ResolveValue(m_AvailableWidth)
+                                : childStyle.GetMargin().Bottom.ResolveValue(m_AvailableHeight);
             }
 
-            if (isRow) {
-                childLayout.localY = crossPos;
-                childLayout.localX = isReverse
-                                            ? currentPosition - childLayout.computedFlexBasis - marginEnd
-                                            : currentPosition + marginStart;
-                childLayout.computedWidth = childLayout.computedFlexBasis;
+            if (m_IsRow) {
+                childLayout.LocalY = crossPos;
+                childLayout.LocalX = m_IsReverse
+                                         ? currentPosition - childLayout.ComputedFlexBasis - marginEnd
+                                         : currentPosition + marginStart;
+                childLayout.ComputedWidth = childLayout.ComputedFlexBasis;
             } else {
-                childLayout.localX = crossPos;
-                childLayout.localY = isReverse
-                                            ? currentPosition - childLayout.computedFlexBasis - marginEnd
-                                            : currentPosition + marginStart;
-                childLayout.computedHeight = childLayout.computedFlexBasis;
+                childLayout.LocalX = crossPos;
+                childLayout.LocalY = m_IsReverse
+                                         ? currentPosition - childLayout.ComputedFlexBasis - marginEnd
+                                         : currentPosition + marginStart;
+                childLayout.ComputedHeight = childLayout.ComputedFlexBasis;
             }
 
-            int reverseMultiply = (isReverse ? -1 : 1);
-            currentPosition += reverseMultiply * (marginStart + childLayout.computedFlexBasis + marginEnd + gap);
-        }
-
-
-        crossPos += line.crossSize;
-    }
-
-    updateCrossSize(lines);
-
-    // Each in-flow item now has a definite border-box: its main size from the
-    // positioning loop above and its cross size from updateCrossSize. During the
-    // flex-basis phase, AUTO-size items were measured against NaN and collapsed
-    // their subtrees to 0 (see Node::computeDimensions). Re-lay-out each item's
-    // subtree at its final size so grown/stretched descendants render correctly.
-    for (auto &line: lines) {
-        for (auto child: line.flexItems) {
-            DEF_NODE_STYLE(child);
-            const auto &childDim = childStyle.dimensions();
-            if (childDim.display == OuterDisplay::None) continue;
-            if (childDim.position != PositionType::Static &&
-                childDim.position != PositionType::Relative) {
-                continue;
-            }
-            DEF_NODE_LAYOUT(child);
-            child->layoutContentsWithDefiniteSize(childLayout.computedWidth,
-                                                  childLayout.computedHeight);
-        }
-    }
-}
-
-
-/// Greedily pack items into one flex line, advancing `iterator` until the next item would
-/// overflow `totalMainAxisSize` (when wrapping is enabled).
-FlexLine FlexLayoutStrategy::calculateFlexLine(std::vector<Node *>::iterator &iterator,
-                                               std::vector<Node *>::iterator &end,
-                                               float totalMainAxisSize) {
-    DEF_NODE_STYLE(container);
-    DEF_NODE_LAYOUT(container);
-
-    bool isRow = containerStyle.flex().isRow();
-    bool isWrap = containerStyle.flex().wrap == FlexWrap::Wrap || containerStyle.flex().wrap == FlexWrap::WrapReverse;
-    auto &gap = containerStyle.flex().gap;
-
-    float gapSize = isRow
-                        ? gap.column.resolveValue(containerLayout.computedWidth)
-                        : gap.row.resolveValue(containerLayout.computedHeight);
-
-    float takenSize = 0;
-
-    bool foundFirst = false;
-    float totalFlexGrow = 0, totalFlexShrinkScaledFactors = 0;
-    int numberOfAutoMargin = 0;
-    std::vector<Node *> items;
-    float totalCrossSize = 0;
-
-    for (; iterator != end; ++iterator) {
-        auto child = *iterator;
-
-
-        DEF_NODE_STYLE(child);
-        if (childStyle.dimensions().display == OuterDisplay::None) continue;
-        DEF_NODE_LAYOUT(child);
-
-        auto &margin = childStyle.margin();
-
-        if (isRow) {
-            if (margin.left.unit == CSSUnit::AUTO) numberOfAutoMargin++;
-            if (margin.right.unit == CSSUnit::AUTO) numberOfAutoMargin++;
-            totalCrossSize = std::max(totalCrossSize, childLayout.computedHeight);
-        } else {
-            totalCrossSize = std::max(totalCrossSize, childLayout.computedWidth);
-            if (margin.top.unit == CSSUnit::AUTO) numberOfAutoMargin++;
-            if (margin.bottom.unit == CSSUnit::AUTO) numberOfAutoMargin++;
-        }
-
-        float neededMargin = calculatedNeededMargin(isRow, margin, totalMainAxisSize);
-        float newTaken = takenSize + neededMargin + childLayout.computedFlexBasis;
-
-        if (foundFirst) {
-            newTaken += gapSize;
-        }
-
-        if (newTaken > totalMainAxisSize && foundFirst && isWrap) {
-            break;
-        }
-
-        foundFirst = true;
-        items.push_back(child);
-        totalFlexGrow += childStyle.flex().flexGrow;
-        totalFlexShrinkScaledFactors += childStyle.flex().flexShrink * childLayout.computedFlexBasis;
-        takenSize = newTaken;
-    }
-
-    return {
-        .flexItems = std::move(items),
-        .numberOfAutoMargin = numberOfAutoMargin,
-        .takenSize = takenSize,
-        .totalFlexGrow = totalFlexGrow,
-        .totalFlexShrinkScaledFactors = totalFlexShrinkScaledFactors,
-        .crossSize = totalCrossSize
-    };
-}
-
-/// Multi-pass "resolve flexible lengths" (W3C Flexbox §9.7): distribute free space
-/// proportionally, freeze items that violate min/max, and re-distribute among the rest.
-void FlexLayoutStrategy::resolveFlexibleLengths(FlexLine &line, float availableSpace, bool isRow,
-                                                float availableWidth, float availableHeight) {
-    if (line.flexItems.empty()) return;
-
-    float remainingSpace = availableSpace - line.takenSize;
-
-    // Auto margins consume the free space instead of grow/shrink.
-    if (line.numberOfAutoMargin > 0) return;
-
-    bool isGrowing = remainingSpace > 0 && line.totalFlexGrow > 0;
-    bool isShrinking = remainingSpace < 0 && line.totalFlexShrinkScaledFactors != 0;
-    // No early-out when remainingSpace == 0: min/max may still need enforcing (e.g. max < basis).
-
-    std::vector frozen(line.flexItems.size(), false);
-    std::vector<float> baseSizes(line.flexItems.size());  ///< hypothetical basis, reset each pass
-    for (size_t i = 0; i < line.flexItems.size(); i++) {
-        baseSizes[i] = line.flexItems[i]->layout().computedFlexBasis;
-    }
-
-    // Freeze zero-flex-factor items per W3C §9.7.
-    for (size_t i = 0; i < line.flexItems.size(); i++) {
-        auto &s = line.flexItems[i]->style().flex();
-        if ((isGrowing && s.flexGrow == 0) || (isShrinking && s.flexShrink == 0)) {
-            frozen[i] = true;
+            const float direction = m_IsReverse ? -1.0f : 1.0f;
+            currentPosition += direction * (marginStart + childLayout.ComputedFlexBasis + marginEnd + gap);
         }
     }
 
-    DEF_NODE_STYLE(container);
-    DEF_NODE_LAYOUT(container);
-    auto &gap = containerStyle.flex().gap;
-    float gapSize = isRow
-                        ? gap.column.resolveValue(containerLayout.computedWidth)
-                        : gap.row.resolveValue(containerLayout.computedHeight);
+    /// align-content across lines + per-item cross sizing (stretch), auto cross margins
+    /// and align-items/align-self placement.
+    void AlignLinesOnCrossAxis() {
+        const std::size_t lineCount = m_Lines.Count();
+        if (lineCount == 0) return;
 
-    // Re-run until no item newly violates a min/max constraint.
-    for (;;) {
-        // Totals over the still-unfrozen items.
-        float unfrozenFlexGrow = 0;
-        float unfrozenScaledShrink = 0;
-        float frozenSize = 0;
+        const float containerCrossSize = m_IsRow ? m_Layout.ComputedHeight : m_Layout.ComputedWidth;
+        const float width = m_Layout.ComputedWidth;
 
-        for (size_t i = 0; i < line.flexItems.size(); i++) {
-            if (frozen[i]) {
-                frozenSize += line.flexItems[i]->layout().computedFlexBasis;
-            } else {
-                auto &s = line.flexItems[i]->style().flex();
-                unfrozenFlexGrow += s.flexGrow;
-                unfrozenScaledShrink += s.flexShrink * baseSizes[i];
+        const float paddingStart = m_IsRow
+                                       ? m_Style.GetPadding().Top.ResolveValue(width)
+                                       : m_Style.GetPadding().Left.ResolveValue(width);
+        const float paddingEnd = m_IsRow
+                                     ? m_Style.GetPadding().Bottom.ResolveValue(width)
+                                     : m_Style.GetPadding().Right.ResolveValue(width);
+
+        float totalLineCrossSize = 0;
+        for (std::size_t li = 0; li < lineCount; ++li)
+            totalLineCrossSize += m_Lines[li].CrossSize;
+
+        float extraSpace = std::max(0.0f, containerCrossSize - paddingStart - paddingEnd - totalLineCrossSize);
+        float crossOffset = paddingStart;
+        float lineSpacing = 0;
+        const bool isWrapReverse = m_Style.GetFlex().Wrap == FlexWrap::WrapReverse;
+
+        if (lineCount == 1) {
+            const float availableCross = containerCrossSize - paddingStart - paddingEnd;
+            if (std::isnan(m_Lines[0].CrossSize) || m_Lines[0].CrossSize < availableCross) {
+                m_Lines[0].CrossSize = availableCross;
+                extraSpace = 0;
             }
         }
 
-        float freeSpace = availableSpace - frozenSize;
-        for (size_t i = 0; i < line.flexItems.size(); i++) {
-            if (!frozen[i]) freeSpace -= baseSizes[i];
-        }
-
-        if (line.flexItems.size() > 1) {
-            freeSpace -= (line.flexItems.size() - 1) * gapSize;
-        }
-
-        // Distribute free space to unfrozen items.
-        for (size_t i = 0; i < line.flexItems.size(); i++) {
-            if (frozen[i]) continue;
-            auto *child = line.flexItems[i];
-            auto &childStyle = child->style();
-
-            float newSize = baseSizes[i];
-            if (isGrowing && unfrozenFlexGrow > 0) {
-                float ratio = childStyle.flex().flexGrow / unfrozenFlexGrow;
-                newSize = baseSizes[i] + ratio * freeSpace;
-            } else if (isShrinking && unfrozenScaledShrink != 0) {
-                float scaledFactor = childStyle.flex().flexShrink * baseSizes[i];
-                float ratio = scaledFactor / unfrozenScaledShrink;
-                newSize = baseSizes[i] + ratio * freeSpace; // freeSpace is negative
-            }
-
-            child->layout().computedFlexBasis = newSize;
-        }
-
-        // Clamp to min/max and freeze any violator.
-        bool anyNewFreezes = false;
-
-        for (size_t i = 0; i < line.flexItems.size(); i++) {
-            if (frozen[i]) continue;
-            auto *child = line.flexItems[i];
-            auto &dims = child->style().dimensions();
-            float current = child->layout().computedFlexBasis;
-            float clamped = current;
-
-            if (isRow) {
-                if (dims.maxWidth.unit != CSSUnit::AUTO) {
-                    clamped = std::min(clamped, dims.maxWidth.resolveValue(availableWidth));
-                }
-                if (dims.minWidth.unit != CSSUnit::AUTO) {
-                    clamped = std::max(clamped, dims.minWidth.resolveValue(availableWidth));
-                }
-            } else {
-                if (dims.maxHeight.unit != CSSUnit::AUTO) {
-                    clamped = std::min(clamped, dims.maxHeight.resolveValue(availableHeight));
-                }
-                if (dims.minHeight.unit != CSSUnit::AUTO) {
-                    clamped = std::max(clamped, dims.minHeight.resolveValue(availableHeight));
-                }
-            }
-
-            if (clamped != current) {
-                child->layout().computedFlexBasis = clamped;
-                frozen[i] = true;
-                anyNewFreezes = true;
-            }
-        }
-
-        if (!anyNewFreezes) break;
-    }
-}
-
-void FlexLayoutStrategy::updateCrossSize(std::vector<FlexLine> &lines) {
-    if (lines.empty()) return;
-
-    DEF_NODE_STYLE(container);
-    DEF_NODE_LAYOUT(container);
-    const bool isRow = containerStyle.flex().isRow();
-    float containerCrossSize = isRow ? containerLayout.computedHeight : containerLayout.computedWidth;
-
-    float width = containerLayout.computedWidth;
-    float paddingStart = isRow
-                             ? containerStyle.padding().top.resolveValue(width)
-                             : containerStyle.padding().left.resolveValue(width);
-    float paddingEnd = isRow
-                           ? containerStyle.padding().bottom.resolveValue(width)
-                           : containerStyle.padding().right.resolveValue(width);
-
-    float totalLineCrossSize = 0;
-    bool isReverse = containerStyle.flex().wrap == FlexWrap::WrapReverse;
-    for (const auto &line: lines) {
-        totalLineCrossSize += line.crossSize;
-    }
-
-    float extraSpace = std::max(0.0f, containerCrossSize - paddingStart - paddingEnd - totalLineCrossSize);
-    float crossOffset = paddingStart;
-    float lineSpacing = 0;
-
-    // A single line fills the container's cross size so align-items:stretch works against it.
-    if (lines.size() == 1) {
-        float availableCross = containerCrossSize - paddingStart - paddingEnd;
-        if (std::isnan(lines[0].crossSize) || lines[0].crossSize < availableCross) {
-            lines[0].crossSize = availableCross;
-            extraSpace = 0; // consumed by the line
-        }
-    }
-
-    switch (containerStyle.flex().alignContent) {
-        case AlignContent::FlexCenter:
-            crossOffset += extraSpace / 2;
-            break;
-        case AlignContent::FlexEnd:
-            crossOffset += extraSpace;
-            break;
-        case AlignContent::SpaceBetween:
-            if (lines.size() > 1) {
-                lineSpacing = extraSpace / (lines.size() - 1);
-            }
-            break;
-        case AlignContent::SpaceAround:
-            if (!lines.empty()) {
-                lineSpacing = extraSpace / lines.size();
-                crossOffset += lineSpacing / 2;
-            }
-            break;
-        case AlignContent::SpaceEvenly:
-            if (!lines.empty()) {
-                lineSpacing = extraSpace / (lines.size() + 1);
+        switch (m_Style.GetFlex().ContentAlign) {
+            case AlignContent::FlexCenter:
+                crossOffset += extraSpace / 2.0f;
+                break;
+            case AlignContent::FlexEnd:
+                crossOffset += extraSpace;
+                break;
+            case AlignContent::SpaceBetween:
+                if (lineCount > 1)
+                    lineSpacing = extraSpace / static_cast<float>(lineCount - 1);
+                break;
+            case AlignContent::SpaceAround:
+                lineSpacing = extraSpace / static_cast<float>(lineCount);
+                crossOffset += lineSpacing / 2.0f;
+                break;
+            case AlignContent::SpaceEvenly:
+                lineSpacing = extraSpace / static_cast<float>(lineCount + 1);
                 crossOffset += lineSpacing;
-            }
-            break;
-        case AlignContent::Stretch:
-            // With multiple lines, grow each to absorb the extra cross space.
-            if (lines.size() > 1 && extraSpace > 0) {
-                float additionalSize = extraSpace / lines.size();
-                for (auto &line: lines) {
-                    line.crossSize += additionalSize;
+                break;
+            case AlignContent::Stretch:
+                if (lineCount > 1 && extraSpace > 0) {
+                    const float add = extraSpace / static_cast<float>(lineCount);
+                    for (std::size_t li = 0; li < lineCount; ++li)
+                        m_Lines[li].CrossSize += add;
                 }
-            }
-            break;
-        default:
-            break;
-    }
-
-    for (auto &line: lines) {
-        float lineCrossStart = isReverse ? (containerCrossSize - crossOffset - line.crossSize) : crossOffset;
-
-        for (auto child: line.flexItems) {
-            DEF_NODE_STYLE(child);
-            auto &dimension = childStyle.dimensions();
-            if (dimension.display == OuterDisplay::None) continue;
-            if (dimension.position != PositionType::Static &&
-                dimension.position != PositionType::Relative) {
-                continue;
-            }
-
-            DEF_NODE_LAYOUT(child);
-            float childCrossSize = isRow ? childLayout.computedHeight : childLayout.computedWidth;
-
-            AlignItems alignment = (childStyle.flex().alignSelf != AlignItems::AUTO_ALIGN)
-                                       ? childStyle.flex().alignSelf
-                                       : containerStyle.flex().alignItems;
-
-            if (alignment == AlignItems::Stretch &&
-                (isRow
-                     ? dimension.height.unit == CSSUnit::AUTO
-                     : dimension.width.unit == CSSUnit::AUTO)) {
-                float marginsCross = isRow
-                                         ? (childStyle.margin().top.resolveValue(line.crossSize) +
-                                            childStyle.margin().bottom.resolveValue(line.crossSize))
-                                         : (childStyle.margin().left.resolveValue(line.crossSize) +
-                                            childStyle.margin().right.resolveValue(line.crossSize));
-
-                float stretchedSize = line.crossSize - marginsCross;
-                if (stretchedSize > 0) {
-                    if (isRow) {
-                        childLayout.computedHeight = stretchedSize;
-                    } else {
-                        childLayout.computedWidth = stretchedSize;
-                    }
-                    childCrossSize = stretchedSize;
-                }
-            }
-
-            float marginStart = isRow
-                                    ? childStyle.margin().top.resolveValue(line.crossSize)
-                                    : childStyle.margin().left.resolveValue(line.crossSize);
-            float marginEnd = isRow
-                                  ? childStyle.margin().bottom.resolveValue(line.crossSize)
-                                  : childStyle.margin().right.resolveValue(line.crossSize);
-
-            bool hasAutoMarginStart = isRow
-                                          ? childStyle.margin().top.unit == CSSUnit::AUTO
-                                          : childStyle.margin().left.unit == CSSUnit::AUTO;
-            bool hasAutoMarginEnd = isRow
-                                        ? childStyle.margin().bottom.unit == CSSUnit::AUTO
-                                        : childStyle.margin().right.unit == CSSUnit::AUTO;
-            int autoMarginCount = (hasAutoMarginStart ? 1 : 0) + (hasAutoMarginEnd ? 1 : 0);
-
-            float availableSpace = line.crossSize - childCrossSize - (marginStart + marginEnd);
-
-            if (autoMarginCount > 0 && availableSpace > 0) {
-                float autoMarginSize = availableSpace / autoMarginCount;
-                if (hasAutoMarginStart) marginStart = autoMarginSize;
-                if (hasAutoMarginEnd) marginEnd = autoMarginSize;
-                alignment = AlignItems::FlexStart;
-            } else {
-                if (hasAutoMarginStart) marginStart = 0;
-                if (hasAutoMarginEnd) marginEnd = 0;
-            }
-
-            float itemCrossPos = 0;
-            switch (alignment) {
-                case AlignItems::FlexStart:
-                    itemCrossPos = lineCrossStart + marginStart;
-                    break;
-                case AlignItems::FlexEnd:
-                    itemCrossPos = lineCrossStart + line.crossSize - childCrossSize - marginEnd;
-                    break;
-                case AlignItems::FlexCenter:
-                    itemCrossPos = lineCrossStart + (line.crossSize - childCrossSize) / 2 + (marginStart - marginEnd) /
-                                   2;
-                    break;
-                case AlignItems::Stretch:
-                    itemCrossPos = lineCrossStart + marginStart;
-                    break;
-                default:
-                    itemCrossPos = lineCrossStart + marginStart;
-                    break;
-            }
-
-            if (isRow) {
-                childLayout.localY = itemCrossPos;
-            } else {
-                childLayout.localX = itemCrossPos;
-            }
+                break;
+            default:
+                break;
         }
 
-        crossOffset += line.crossSize + lineSpacing;
+        for (std::size_t li = 0; li < lineCount; ++li) {
+            const FlexLine &line = m_Lines[li];
+            const float lineCrossStart = isWrapReverse
+                                             ? (containerCrossSize - crossOffset - line.CrossSize)
+                                             : crossOffset;
+
+            for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
+                Node *child = m_Items[i];
+                const auto &childStyle = child->GetStyle();
+                const auto &dimension = childStyle.GetDimensions();
+                auto &childLayout = child->GetLayout();
+                float childCrossSize = m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth;
+
+                AlignItems alignment = childStyle.GetFlex().AlignSelf != AlignItems::AutoAlign
+                                           ? childStyle.GetFlex().AlignSelf
+                                           : m_Style.GetFlex().Align;
+
+                if (alignment == AlignItems::Stretch &&
+                    (m_IsRow
+                         ? dimension.Height.Unit == CSSUnit::Auto
+                         : dimension.Width.Unit == CSSUnit::Auto)) {
+                    const float marginsCross = m_IsRow
+                                                   ? (childStyle.GetMargin().Top.ResolveValue(line.CrossSize) +
+                                                      childStyle.GetMargin().Bottom.ResolveValue(line.CrossSize))
+                                                   : (childStyle.GetMargin().Left.ResolveValue(line.CrossSize) +
+                                                      childStyle.GetMargin().Right.ResolveValue(line.CrossSize));
+                    const float stretchedSize = line.CrossSize - marginsCross;
+                    if (stretchedSize > 0) {
+                        if (m_IsRow) childLayout.ComputedHeight = stretchedSize;
+                        else childLayout.ComputedWidth = stretchedSize;
+                        childCrossSize = stretchedSize;
+                    }
+                }
+
+                float marginStart = m_IsRow
+                                        ? childStyle.GetMargin().Top.ResolveValue(line.CrossSize)
+                                        : childStyle.GetMargin().Left.ResolveValue(line.CrossSize);
+                float marginEnd = m_IsRow
+                                      ? childStyle.GetMargin().Bottom.ResolveValue(line.CrossSize)
+                                      : childStyle.GetMargin().Right.ResolveValue(line.CrossSize);
+
+                const bool hasAutoStart = m_IsRow
+                                              ? childStyle.GetMargin().Top.Unit == CSSUnit::Auto
+                                              : childStyle.GetMargin().Left.Unit == CSSUnit::Auto;
+                const bool hasAutoEnd = m_IsRow
+                                            ? childStyle.GetMargin().Bottom.Unit == CSSUnit::Auto
+                                            : childStyle.GetMargin().Right.Unit == CSSUnit::Auto;
+                const int autoMarginCount = (hasAutoStart ? 1 : 0) + (hasAutoEnd ? 1 : 0);
+
+                const float availableForAuto = line.CrossSize - childCrossSize - (marginStart + marginEnd);
+                if (autoMarginCount > 0 && availableForAuto > 0) {
+                    const float autoSize = availableForAuto / autoMarginCount;
+                    if (hasAutoStart) marginStart = autoSize;
+                    if (hasAutoEnd) marginEnd = autoSize;
+                    alignment = AlignItems::FlexStart;
+                } else {
+                    if (hasAutoStart) marginStart = 0;
+                    if (hasAutoEnd) marginEnd = 0;
+                }
+
+                float itemCrossPos = 0;
+                switch (alignment) {
+                    case AlignItems::FlexStart:
+                        itemCrossPos = lineCrossStart + marginStart;
+                        break;
+                    case AlignItems::FlexEnd:
+                        itemCrossPos = lineCrossStart + line.CrossSize - childCrossSize - marginEnd;
+                        break;
+                    case AlignItems::FlexCenter:
+                        itemCrossPos = lineCrossStart + (line.CrossSize - childCrossSize) / 2.0f
+                                       + (marginStart - marginEnd) / 2.0f;
+                        break;
+                    default: // Stretch + fallback
+                        itemCrossPos = lineCrossStart + marginStart;
+                        break;
+                }
+
+                if (m_IsRow) childLayout.LocalY = itemCrossPos;
+                else childLayout.LocalX = itemCrossPos;
+            }
+
+            crossOffset += line.CrossSize + lineSpacing;
+        }
     }
+
+    /// Re-lay-out each item at its now-definite border box. During the basis phase,
+    /// AUTO-size items collapsed their subtrees to 0 (measured against NaN); this pass
+    /// expands them at the resolved size.
+    void RelayoutItemsAtDefiniteSize() {
+        const std::size_t lineCount = m_Lines.Count();
+        for (std::size_t li = 0; li < lineCount; ++li) {
+            const FlexLine line = m_Lines[li]; // copy out: the recursive solve grows the arena
+            for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
+                Node *child = m_Items[i];
+                const auto &childLayout = child->GetLayout();
+                child->LayoutContentsWithDefiniteSize(m_Ctx, childLayout.ComputedWidth,
+                                                      childLayout.ComputedHeight);
+            }
+        }
+    }
+
+    Node &m_Container;
+    LayoutContext &m_Ctx;
+    Style &m_Style;
+    ::Layout &m_Layout;
+    const bool m_IsRow;
+    const bool m_IsReverse;
+    float m_AvailableWidth;
+    float m_AvailableHeight;
+    float m_TotalMainSize = 0;
+    float m_MaxCrossSize = 0;
+    ArenaSlice<Node *> m_Items;
+    ArenaSlice<FlexLine> m_Lines;
+    std::size_t m_NextItem = 0;
+};
+
+void FlexLayoutStrategy::Layout(Node &container, LayoutContext &ctx,
+                                const float availableWidth, const float availableHeight) const {
+    // The out-of-flow list must reflect exactly this run: the strategy can run more than
+    // once per frame (basis + definite passes), and stale entries would be positioned twice.
+    container.m_OutOfFlowChildren.clear();
+
+    Solver(container, ctx, availableWidth, availableHeight).Run();
 }

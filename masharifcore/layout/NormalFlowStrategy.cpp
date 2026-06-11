@@ -1,82 +1,89 @@
 #include "NormalFlowStrategy.h"
 
+#include "LayoutContext.h"
 #include "Node.h"
+
+#include <algorithm>
+
 using namespace masharif;
 
-void NormalFlowStrategy::layout(float availableWidth, float availableHeight) {
-    float currentX = 0.0f;
-    float currentY = 0.0f;
-    float lineHeight = 0.0f;
-    std::vector<Node*> currentLine;
-    DEF_NODE_LAYOUT(container);
-    DEF_NODE_STYLE(container);
-    auto &containerBorder = containerStyle.border();
-    const auto &containerPadding = containerStyle.padding();
-    for (const auto &child: container->children) {
-        DEF_NODE_STYLE(child);
-
-        auto position = childStyle.dimensions().position;
-        if (position != PositionType::Static &&
-            position != PositionType::Relative) {
-            container->outOfFlowChildren.push_back(child);
-            continue;
+namespace {
+    void LayoutLine(ArenaSlice<Node *> &line, const float y) {
+        float x = 0.0f;
+        const std::size_t count = line.Count();
+        for (std::size_t i = 0; i < count; ++i) {
+            Node *child = line[i];
+            auto &childLayout = child->GetLayout();
+            const auto &childStyle = child->GetStyle();
+            childLayout.LocalX = x;
+            childLayout.LocalY = y;
+            x += childLayout.ComputedWidth + childStyle.GetMargin().Left.Value + childStyle.GetMargin().Right.Value;
         }
-        DEF_NODE_LAYOUT(child);
-        auto &childMargin = childStyle.margin();
-        auto &childPadding = childStyle.padding();
-
-        child->layoutImpl(availableWidth, availableHeight);
-
-        auto display = childStyle.dimensions().display;
-        // Block/Flex are block-level; InlineBlock/InlineFlex are inline-level. The flex variants
-        // must be handled here or a flex child never gets positioned (content drifts every frame).
-        if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
-            if (!currentLine.empty()) {
-                layoutLine(currentLine, currentY);
-                currentY += lineHeight;
-                currentLine.clear();
-                currentX = 0.0f;
-                lineHeight = 0.0f;
-            }
-
-            childLayout.localX = containerPadding.left.value + containerBorder.widthLeft.value;
-            childLayout.localY = currentY + containerPadding.top.value + containerBorder.widthTop.value;
-            currentY += childLayout.computedHeight + childMargin.top.value + childMargin.bottom.value;
-        }
-        // Handle inline-level elements (inline-block / inline-flex)
-        else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {
-            float childWidth = childLayout.computedWidth + childMargin.left.value + childMargin.right.value;
-
-            // Wrap to a new line if necessary
-            if (currentX + childWidth > availableWidth && !currentLine.empty()) {
-                layoutLine(currentLine, currentY);
-                currentY += lineHeight;
-                currentLine.clear();
-                currentX = 0.0f;
-                lineHeight = 0.0f;
-            }
-            auto &childBorder = childStyle.border();
-            currentLine.push_back(child.get());
-            currentX += childWidth;
-            lineHeight = std::max(lineHeight,
-                                  childLayout.computedHeight + childMargin.top.value + childMargin.bottom.value +
-                                  childPadding.top.value + childPadding.bottom.value +
-                                  childBorder.widthTop.value + childBorder.widthBottom.value);
-        }
-    }
-
-    if (!currentLine.empty()) {
-        layoutLine(currentLine, currentY);
     }
 }
 
-void NormalFlowStrategy::layoutLine(std::vector<Node*> &line, float y) {
-    float x = 0.0f; // simple left alignment
-    for (auto &child: line) {
-        DEF_NODE_LAYOUT(child);
-        DEF_NODE_STYLE(child);
-        childLayout.localX = x;
-        childLayout.localY = y;
-        x += childLayout.computedWidth + childStyle.margin().left.value + childStyle.margin().right.value;
+void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
+                                const float availableWidth, const float availableHeight) const {
+    // The out-of-flow list must reflect exactly this run; see FlexLayoutStrategy::Layout.
+    container.m_OutOfFlowChildren.clear();
+
+    float currentX = 0.0f;
+    float currentY = 0.0f;
+    float lineHeight = 0.0f;
+    ArenaSlice<Node *> line(ctx.InFlowItems);
+
+    const auto &containerStyle = container.GetStyle();
+    const auto &containerBorder = containerStyle.GetBorder();
+    const auto &containerPadding = containerStyle.GetPadding();
+
+    for (const auto &child: container.m_Children) {
+        const auto &childStyle = child->GetStyle();
+
+        const auto position = childStyle.GetDimensions().Position;
+        if (position != PositionType::Static &&
+            position != PositionType::Relative) {
+            container.m_OutOfFlowChildren.push_back(child);
+            continue;
+        }
+        auto &childLayout = child->GetLayout();
+        const auto &childMargin = childStyle.GetMargin();
+        const auto &childPadding = childStyle.GetPadding();
+
+        child->LayoutImpl(ctx, availableWidth, availableHeight);
+
+        const auto display = childStyle.GetDimensions().Display;
+        if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
+            if (!line.Empty()) {
+                LayoutLine(line, currentY);
+                currentY += lineHeight;
+                line.Clear();
+                currentX = 0.0f;
+                lineHeight = 0.0f;
+            }
+
+            childLayout.LocalX = containerPadding.Left.Value + containerBorder.WidthLeft.Value;
+            childLayout.LocalY = currentY + containerPadding.Top.Value + containerBorder.WidthTop.Value;
+            currentY += childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value;
+        } else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {
+            const float childWidth = childLayout.ComputedWidth + childMargin.Left.Value + childMargin.Right.Value;
+
+            if (currentX + childWidth > availableWidth && !line.Empty()) {
+                LayoutLine(line, currentY);
+                currentY += lineHeight;
+                line.Clear();
+                currentX = 0.0f;
+                lineHeight = 0.0f;
+            }
+            const auto &childBorder = childStyle.GetBorder();
+            line.Append(child.get());
+            currentX += childWidth;
+            lineHeight = std::max(lineHeight,
+                                  childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value +
+                                  childPadding.Top.Value + childPadding.Bottom.Value +
+                                  childBorder.WidthTop.Value + childBorder.WidthBottom.Value);
+        }
     }
+
+    if (!line.Empty())
+        LayoutLine(line, currentY);
 }

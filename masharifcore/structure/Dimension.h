@@ -5,14 +5,14 @@
 
 namespace masharif {
     struct Dimensions {
-        OuterDisplay display = OuterDisplay::Block;
-        CSSValue width;
-        CSSValue height;
-        CSSValue minWidth{0};
-        CSSValue minHeight{0};
-        CSSValue maxWidth;
-        CSSValue maxHeight;
-        CSSValue top{0}, right{0}, bottom{0}, left{0};
-        PositionType position = PositionType::Static;
+        OuterDisplay Display = OuterDisplay::Block;
+        CSSValue Width;
+        CSSValue Height;
+        CSSValue MinWidth{0};
+        CSSValue MinHeight{0};
+        CSSValue MaxWidth;
+        CSSValue MaxHeight;
+        CSSValue Top{0}, Right{0}, Bottom{0}, Left{0};
+        PositionType Position = PositionType::Static;
     };
 }

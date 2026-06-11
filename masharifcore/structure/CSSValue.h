@@ -5,52 +5,52 @@
 
 namespace masharif {
     enum class CSSUnit {
-        PX = 0,
-        PERCENT,
-        AUTO
+        Px = 0,
+        Percent,
+        Auto
     };
 
     struct CSSValue {
-        float value = 0.0f;
-        CSSUnit unit = CSSUnit::AUTO;
+        float Value = 0.0f;
+        CSSUnit Unit = CSSUnit::Auto;
 
-        CSSValue(const float val = NAN) : value(val), unit(std::isnan(val) ? CSSUnit::AUTO : CSSUnit::PX) {
+        CSSValue(const float val = NAN) : Value(val), Unit(std::isnan(val) ? CSSUnit::Auto : CSSUnit::Px) {
         }
 
-        CSSValue(const float val, CSSUnit u) : value(val), unit(u) {
+        CSSValue(const float val, CSSUnit u) : Value(val), Unit(u) {
         }
 
-        /// Resolve to pixels: PX returns the raw value, PERCENT is taken against
-        /// `reference`, AUTO resolves to 0.
-        [[nodiscard]] constexpr float resolveValue(float reference) const {
-            switch (unit) {
-                case CSSUnit::PX: return value;
-                case CSSUnit::PERCENT: return reference * (value / 100.0f);
+        /// Resolve to pixels: Px returns the raw value, Percent is taken against
+        /// `reference`, Auto resolves to 0.
+        [[nodiscard]] constexpr float ResolveValue(float reference) const {
+            switch (Unit) {
+                case CSSUnit::Px: return Value;
+                case CSSUnit::Percent: return reference * (Value / 100.0f);
                 default: return 0.0f;
             }
         }
 
-        [[nodiscard]] bool isUndefined() const {
-            return std::isnan(value);
+        [[nodiscard]] bool IsUndefined() const {
+            return std::isnan(Value);
         }
 
         constexpr bool operator==(const CSSValue &rhs) const {
-            return value == rhs.value && unit == rhs.unit;
+            return Value == rhs.Value && Unit == rhs.Unit;
         }
 
-        constexpr float operator+(const CSSValue &rhs) const { return value + rhs.value; }
-        constexpr float operator-(const CSSValue &rhs) const { return value - rhs.value; }
-        constexpr float operator*(const CSSValue &rhs) const { return value * rhs.value; }
-        constexpr float operator/(const CSSValue &rhs) const { return value / rhs.value; }
+        constexpr float operator+(const CSSValue &rhs) const { return Value + rhs.Value; }
+        constexpr float operator-(const CSSValue &rhs) const { return Value - rhs.Value; }
+        constexpr float operator*(const CSSValue &rhs) const { return Value * rhs.Value; }
+        constexpr float operator/(const CSSValue &rhs) const { return Value / rhs.Value; }
 
-        constexpr float operator+(float rhs) const { return value + rhs; }
-        constexpr float operator-(float rhs) const { return value - rhs; }
-        constexpr float operator*(float rhs) const { return value * rhs; }
-        constexpr float operator/(float rhs) const { return value / rhs; }
+        constexpr float operator+(float rhs) const { return Value + rhs; }
+        constexpr float operator-(float rhs) const { return Value - rhs; }
+        constexpr float operator*(float rhs) const { return Value * rhs; }
+        constexpr float operator/(float rhs) const { return Value / rhs; }
 
-        friend constexpr float operator+(float lhs, const CSSValue &rhs) { return lhs + rhs.value; }
-        friend constexpr float operator-(float lhs, const CSSValue &rhs) { return lhs - rhs.value; }
-        friend constexpr float operator*(float lhs, const CSSValue &rhs) { return lhs * rhs.value; }
-        friend constexpr float operator/(float lhs, const CSSValue &rhs) { return lhs / rhs.value; }
+        friend constexpr float operator+(float lhs, const CSSValue &rhs) { return lhs + rhs.Value; }
+        friend constexpr float operator-(float lhs, const CSSValue &rhs) { return lhs - rhs.Value; }
+        friend constexpr float operator*(float lhs, const CSSValue &rhs) { return lhs * rhs.Value; }
+        friend constexpr float operator/(float lhs, const CSSValue &rhs) { return lhs / rhs.Value; }
     };
 }
