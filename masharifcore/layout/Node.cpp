@@ -30,6 +30,32 @@ namespace
         }
         return current;
     }
+
+    /// Static-position offset along the main axis for an auto-inset out-of-flow child,
+    /// mirroring how justify-content places an in-flow item (single-item semantics: the
+    /// distributive values collapse to start/center). See PositionLineOnMainAxis.
+    float MainAxisStatic(JustifyContent justify, float freeSpace)
+    {
+        switch (justify)
+        {
+            case JustifyContent::FlexEnd:      return freeSpace;
+            case JustifyContent::FlexCenter:
+            case JustifyContent::SpaceAround:
+            case JustifyContent::SpaceEvenly:  return freeSpace * 0.5f;
+            default:                           return 0.0f; // FlexStart, SpaceBetween, Stretch
+        }
+    }
+
+    /// Cross-axis equivalent, mirroring align-items / align-self. See AlignLinesOnCrossAxis.
+    float CrossAxisStatic(AlignItems align, float freeSpace)
+    {
+        switch (align)
+        {
+            case AlignItems::FlexEnd:    return freeSpace;
+            case AlignItems::FlexCenter: return freeSpace * 0.5f;
+            default:                     return 0.0f; // FlexStart, Stretch, Baseline, AutoAlign
+        }
+    }
 }
 
 void Node::RemoveChild(SharedNode& child)
@@ -45,9 +71,9 @@ void Node::RemoveChild(SharedNode& child)
 void Node::MarkDirtyToRoot()
 {
     m_Style.Dirty = true;
-    for (Node* p = m_Parent; p && !p->m_DescendantDirty; p = p->m_Parent)
+    for (Node* p = m_Parent; p && !p->m_descendantDirty; p = p->m_Parent)
     {
-        p->m_DescendantDirty = true;
+        p->m_descendantDirty = true;
     }
 }
 
@@ -56,8 +82,8 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
     // Clear dirty at end of frame (not mid-solve, which would hide a change from the
     // later definite-size pass).
     m_Style.Dirty = false;
-    m_DescendantDirty = false;
-    m_PositionsDirty = false;
+    m_descendantDirty = false;
+    m_positionsDirty = false;
 
     const float absX = m_Layout.ComputedX;
     const float absY = m_Layout.ComputedY;
@@ -83,11 +109,11 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
         childLayout.ComputedY = newY;
 
         // Recurse only where something can have changed: the subtree moved, was re-solved
-        // (m_PositionsDirty), or carries dirt to clear. MarkDirtyToRoot flags every ancestor
+        // (m_positionsDirty), or carries dirt to clear. MarkDirtyToRoot flags every ancestor
         // and a strategy only runs while all ancestors' strategies are on the stack, so a
         // flagged node is always reachable through flagged ancestors — skipped subtrees are
         // flag-free by construction. Idle frames touch only the clean frontier.
-        if (originChanged || child->m_PositionsDirty || child->m_Style.Dirty || child->m_DescendantDirty)
+        if (originChanged || child->m_positionsDirty || child->m_Style.Dirty || child->m_descendantDirty)
         {
             child->StartUpdatingPositions(ctx);
             child->PositionOutOfFlowChildren(ctx);
@@ -137,7 +163,7 @@ void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
 
 void Node::Calculate(float availableWidth, float availableHeight)
 {
-    m_Generation = BumpTreeGeneration();
+    m_generation = BumpTreeGeneration();
     LayoutContext ctx;
     LayoutImpl(ctx, availableWidth, availableHeight);
     // Root's local origin is its absolute origin; descendants derive theirs from it.
@@ -151,17 +177,17 @@ void Node::Calculate(float availableWidth, float availableHeight)
 
 void Node::LayoutImpl(float availableWidth, float availableHeight, bool ignoreMinMax)
 {
-    m_Generation = BumpTreeGeneration();
+    m_generation = BumpTreeGeneration();
     LayoutContext ctx;
     LayoutImpl(ctx, availableWidth, availableHeight, ignoreMinMax);
 }
 
 const Node::MeasureCacheEntry* Node::FindMeasure(float availW, float availH, bool ignoreMinMax) const
 {
-    if (m_Generation == 0) return nullptr; // never solved under a frame stamp
-    for (const auto& entry : m_MeasureCache)
+    if (m_generation == 0) return nullptr; // never solved under a frame stamp
+    for (const auto& entry : m_measureCache)
     {
-        if (entry.Generation == m_Generation &&
+        if (entry.Generation == m_generation &&
             entry.IgnoreMinMax == ignoreMinMax &&
             SameSize(entry.AvailW, availW) && SameSize(entry.AvailH, availH))
             return &entry;
@@ -171,8 +197,8 @@ const Node::MeasureCacheEntry* Node::FindMeasure(float availW, float availH, boo
 
 void Node::RecordMeasure(float availW, float availH, bool ignoreMinMax, float resultW, float resultH)
 {
-    m_MeasureCache[m_MeasureCacheNext] = {m_Generation, availW, availH, ignoreMinMax, resultW, resultH};
-    m_MeasureCacheNext = static_cast<std::uint8_t>((m_MeasureCacheNext + 1) % MeasureCacheSize);
+    m_measureCache[m_measureCacheNext] = {m_generation, availW, availH, ignoreMinMax, resultW, resultH};
+    m_measureCacheNext = static_cast<std::uint8_t>((m_measureCacheNext + 1) % MeasureCacheSize);
 }
 
 void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableHeight, bool ignoreMinMax)
@@ -185,22 +211,22 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
         return;
     }
 
-    const bool spaceSame = SameSize(availableWidth, m_LastAvailW) &&
-        SameSize(availableHeight, m_LastAvailH);
+    const bool spaceSame = SameSize(availableWidth, m_lastAvailW) &&
+        SameSize(availableHeight, m_lastAvailH);
 
     // Full reuse: nothing changed and the space matches the last solve, so the cached layout
     // is still valid (dirty is cleared at end of frame, not here). Style::Modify propagates
     // m_DescendantDirty through every ancestor, so these two flags are the whole contract.
-    if (spaceSame && !m_Style.Dirty && !m_DescendantDirty)
+    if (spaceSame && !m_Style.Dirty && !m_descendantDirty)
     {
         // Report the content-box size, not a transient grow/shrink value an ancestor's resolve
         // may have left in ComputedWidth/Height (a re-solving parent reads it for flex basis).
-        m_Layout.ComputedWidth = m_ImplW;
-        m_Layout.ComputedHeight = m_ImplH;
+        m_Layout.ComputedWidth = m_implW;
+        m_Layout.ComputedHeight = m_implH;
         // Make the result replayable for this frame: if a later full solve at different
         // inputs overwrites m_LastAvail, a repeat call at these inputs must not re-solve.
         if (!FindMeasure(availableWidth, availableHeight, ignoreMinMax))
-            RecordMeasure(availableWidth, availableHeight, ignoreMinMax, m_ImplW, m_ImplH);
+            RecordMeasure(availableWidth, availableHeight, ignoreMinMax, m_implW, m_implH);
         return;
     }
 
@@ -215,8 +241,8 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
         return;
     }
 
-    m_LastAvailW = availableWidth;
-    m_LastAvailH = availableHeight;
+    m_lastAvailW = availableWidth;
+    m_lastAvailH = availableHeight;
 
     if (m_Style.Dirty || !spaceSame)
         ComputeDimensions(ctx, availableWidth, availableHeight, ignoreMinMax);
@@ -227,8 +253,8 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
     // Descendants now reflect this available-space run, not the last definite distribution;
     // the next definite pass must re-run even if its size memo matches. (Subsumes the old
     // shrink-wrapped-AUTO-main-axis special case.)
-    m_StrategyRanSinceDefinite = true;
-    m_PositionsDirty = true;
+    m_strategyRanSinceDefinite = true;
+    m_positionsDirty = true;
 
     if (auto& position = m_Style.GetDimensions().Position; position == PositionType::Relative)
     {
@@ -267,9 +293,9 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
     // Remember this run's content-box size for the reuse early-out (the parent may mutate
     // ComputedWidth/Height via flex grow/shrink before then), and make it replayable for
     // repeat same-input calls within this frame.
-    m_ImplW = m_Layout.ComputedWidth;
-    m_ImplH = m_Layout.ComputedHeight;
-    RecordMeasure(availableWidth, availableHeight, ignoreMinMax, m_ImplW, m_ImplH);
+    m_implW = m_Layout.ComputedWidth;
+    m_implH = m_Layout.ComputedHeight;
+    RecordMeasure(availableWidth, availableHeight, ignoreMinMax, m_implW, m_implH);
 }
 
 void Node::LayoutContentsWithDefiniteSize(LayoutContext& ctx, float borderBoxWidth, float borderBoxHeight)
@@ -286,20 +312,20 @@ void Node::LayoutContentsWithDefiniteSize(LayoutContext& ctx, float borderBoxWid
 
     // The memo is only meaningful while the descendants still reflect the last definite
     // distribution; any impl-path strategy run since then repositioned them.
-    const bool stillDefinite = SameSize(borderBoxWidth, m_LastDefW) &&
-        SameSize(borderBoxHeight, m_LastDefH) &&
-        !m_StrategyRanSinceDefinite;
+    const bool stillDefinite = SameSize(borderBoxWidth, m_lastDefW) &&
+        SameSize(borderBoxHeight, m_lastDefH) &&
+        !m_strategyRanSinceDefinite;
 
     // Reuse across frames when the subtree is clean, or within the frame when this exact
     // distribution already ran this generation (the flex parent's second pass).
     if (stillDefinite &&
-        ((!m_Style.Dirty && !m_DescendantDirty) || (m_Generation != 0 && m_DefGeneration == m_Generation)))
+        ((!m_Style.Dirty && !m_descendantDirty) || (m_generation != 0 && m_defGeneration == m_generation)))
         return;
 
-    m_StrategyRanSinceDefinite = false;
-    m_LastDefW = borderBoxWidth;
-    m_LastDefH = borderBoxHeight;
-    m_DefGeneration = m_Generation;
+    m_strategyRanSinceDefinite = false;
+    m_lastDefW = borderBoxWidth;
+    m_lastDefH = borderBoxHeight;
+    m_defGeneration = m_generation;
 
     // Border-box -> content-box for the strategy (ComputeDimensions re-adds padding+border,
     // so subtract them here exactly once).
@@ -311,12 +337,16 @@ void Node::LayoutContentsWithDefiniteSize(LayoutContext& ctx, float borderBoxWid
     const float contentHeight = std::max(0.0f, borderBoxHeight - vertical);
 
     // Drive the strategy directly (LayoutImpl would re-apply the Block AUTO-height override
-    // and discard the adopted size). MainSizeIsDefinite tells flex to fill, not shrink-wrap.
-    m_MainSizeDefinite = true;
+    // and discard the adopted size). MainSizeIsDefinite tells flex to fill, not shrink-wrap;
+    // CrossSizeIsDefinite tells a single flex line to clamp to this border box, not grow to a
+    // taller item (the parent fixed both axes here).
+    m_mainSizeDefinite = true;
+    m_crossSizeDefinite = true;
     LayoutStrategy::For(m_Style.GetDimensions().Display).Layout(*this, ctx, contentWidth, contentHeight);
-    m_MainSizeDefinite = false;
+    m_mainSizeDefinite = false;
+    m_crossSizeDefinite = false;
     ++m_Layout.StrategyRuns;
-    m_PositionsDirty = true;
+    m_positionsDirty = true;
 
     // Re-assert the definite border box (the strategy may rewrite it; guard rounding drift).
     m_Layout.ComputedWidth = borderBoxWidth;
@@ -482,15 +512,43 @@ void Node::PositionOutOfFlowChild(Node* ancestor, float refWidth, float refHeigh
         }
     }
 
-    // Fall back to the static position when neither offset is set.
-    if (!hasLeft && !hasRight)
+    // Auto-inset axes: place at the static position the containing block's flex alignment
+    // implies (CSS/Yoga static position) instead of always pinning to the content origin. Only
+    // a flex containing block contributes alignment; any other display keeps the top-left
+    // origin. Auto insets opt in here — a 0px inset takes the hasLeft/hasTop branches above and
+    // still resolves to the origin, so existing absolute layouts are unchanged.
+    const bool autoX = !hasLeft && !hasRight;
+    const bool autoY = !hasTop && !hasBottom;
+    if (autoX || autoY)
     {
-        m_Layout.ComputedX = cbX;
-    }
+        float staticX = cbX, staticY = cbY;
+        if (ancestor && ancestor->m_Style.GetDimensions().Display == OuterDisplay::Flex)
+        {
+            const CSSFlex& flex = ancestor->m_Style.GetFlex();
+            const auto& bor = ancestor->m_Style.GetBorder();
+            const auto& pad = ancestor->m_Style.GetPadding();
+            const float contentW = std::max(0.0f, refWidth - bor.WidthLeft - bor.WidthRight - pad.Left - pad.Right);
+            const float contentH = std::max(0.0f, refHeight - bor.WidthTop - bor.WidthBottom - pad.Top - pad.Bottom);
+            const float freeX = contentW - m_Layout.ComputedWidth;
+            const float freeY = contentH - m_Layout.ComputedHeight;
 
-    if (!hasTop && !hasBottom)
-    {
-        m_Layout.ComputedY = cbY;
+            const AlignItems self = m_Style.GetFlex().AlignSelf; // child's own align-self wins
+            const AlignItems cross = self != AlignItems::AutoAlign ? self : flex.Align;
+
+            if (flex.IsRow()) // main = X, cross = Y
+            {
+                staticX = cbX + MainAxisStatic(flex.Justify, freeX);
+                staticY = cbY + CrossAxisStatic(cross, freeY);
+            }
+            else // main = Y, cross = X
+            {
+                staticY = cbY + MainAxisStatic(flex.Justify, freeY);
+                staticX = cbX + CrossAxisStatic(cross, freeX);
+            }
+        }
+
+        if (autoX) m_Layout.ComputedX = staticX;
+        if (autoY) m_Layout.ComputedY = staticY;
     }
 }
 

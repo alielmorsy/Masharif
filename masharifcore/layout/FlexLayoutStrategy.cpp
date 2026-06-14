@@ -289,6 +289,10 @@ private:
 
             for (std::size_t i = 0; i < n; i++) {
                 Node *child = m_Items[line.ItemBegin + i];
+                // Item margins consume main-axis space exactly like gaps and bases do (BuildLine
+                // already counts them in line.TakenSize). Subtract them here too, or a grow item
+                // also absorbs its siblings' margins and shoves the trailing items off the container.
+                freeSpace -= NeededMainAxisMargin(m_IsRow, child->GetStyle().GetMargin(), availableSpace);
                 if (frozen[i]) {
                     freeSpace -= child->GetLayout().ComputedFlexBasis; // frozen: current (clamped) basis
                 } else {
@@ -462,7 +466,16 @@ private:
 
         if (lineCount == 1) {
             const float availableCross = containerCrossSize - paddingStart - paddingEnd;
-            if (std::isnan(m_Lines[0].CrossSize) || m_Lines[0].CrossSize < availableCross) {
+            // A single line in a container with a DEFINITE cross size is the container's content
+            // box: an item taller than it overflows, it does not enlarge the line (CSS Flexbox
+            // single-line clamp). Without this a tall sibling stretches every align-stretch
+            // sibling past the container, shoving Expanded-anchored trailing children off-surface
+            // (the bad.png sidebar/footer). An AUTO cross axis still shrink-wraps to the tallest.
+            const CSSValue& crossDim = m_IsRow ? m_Style.GetDimensions().Height
+                                               : m_Style.GetDimensions().Width;
+            const bool crossDefinite = crossDim.Unit != CSSUnit::Auto || m_Container.CrossSizeIsDefinite();
+            if (std::isnan(m_Lines[0].CrossSize) || m_Lines[0].CrossSize < availableCross ||
+                (crossDefinite && m_Lines[0].CrossSize > availableCross)) {
                 m_Lines[0].CrossSize = availableCross;
                 extraSpace = 0;
             }
