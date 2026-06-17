@@ -83,18 +83,22 @@ private:
     /// Split children into the in-flow item slice and the container's out-of-flow list,
     /// then order the items by CSS `order` when any item overrides the default.
     void CollectAndOrderItems() {
+        // Detect any non-default `order` while collecting, instead of a second O(n) any_of
+        // scan over m_Items. Accumulate ONLY in the in-flow branch so the flag's domain
+        // matches the items the sort sees (out-of-flow children are never ordered).
+        bool anyOrder = false;
         for (auto &child: m_Container.m_Children) {
             const auto pos = child->GetStyle().GetDimensions().Position;
             const auto display = child->GetStyle().GetDimensions().Display;
             if (pos != PositionType::Static && pos != PositionType::Relative) {
-                m_Container.m_OutOfFlowChildren.push_back(child);
+                m_Container.m_OutOfFlowChildren.push_back(child.get());
             } else if (display != OuterDisplay::None) {
                 m_Items.Append(child.get());
+                anyOrder = anyOrder || child->GetStyle().GetFlex().Order != 0;
             }
         }
 
-        if (std::ranges::any_of(m_Items.begin(), m_Items.end(),
-                                [](Node *n) { return n->GetStyle().GetFlex().Order != 0; })) {
+        if (anyOrder) {
             std::ranges::stable_sort(m_Items.begin(), m_Items.end(), {},
                                      [](Node *n) { return n->GetStyle().GetFlex().Order; });
         }
@@ -211,9 +215,10 @@ private:
     /// Greedily pack items into one flex line starting at m_NextItem. Advances the
     /// cursor past every item consumed; on wrap it is left at the next line's first item.
     [[nodiscard]] FlexLine BuildLine(const float lineMainSize) {
-        const bool isWrap = m_Style.GetFlex().Wrap == FlexWrap::Wrap ||
-                            m_Style.GetFlex().Wrap == FlexWrap::WrapReverse;
-        const auto &gaps = m_Style.GetFlex().Gaps;
+        const CSSFlex &flex = m_Style.GetFlex();
+        const bool isWrap = flex.Wrap == FlexWrap::Wrap ||
+                            flex.Wrap == FlexWrap::WrapReverse;
+        const auto &gaps = flex.Gaps;
         const float gapSize = m_IsRow
                                   ? gaps.Column.ResolveValue(m_Layout.ComputedWidth)
                                   : gaps.Row.ResolveValue(m_Layout.ComputedHeight);
@@ -251,8 +256,9 @@ private:
                 break; // the cursor is NOT advanced — this item opens the next line
 
             foundFirst = true;
-            totalFlexGrow += childStyle.GetFlex().FlexGrow;
-            totalFlexShrinkScaled += childStyle.GetFlex().FlexShrink * childLayout.ComputedFlexBasis;
+            const CSSFlex &childFlex = childStyle.GetFlex();
+            totalFlexGrow += childFlex.FlexGrow;
+            totalFlexShrinkScaled += childFlex.FlexShrink * childLayout.ComputedFlexBasis;
             takenSize = newTaken;
         }
 
@@ -279,14 +285,46 @@ private:
         const bool isGrowing = remainingSpace > 0 && line.TotalFlexGrow > 0;
         const bool isShrinking = remainingSpace < 0 && line.TotalFlexShrinkScaledFactors != 0;
 
+        // Inflexible line (neither growing nor shrinking): the distribution term is provably
+        // zero, so the full freeze loop reduces to a single min/max clamp per item that
+        // converges immediately. Skip the baseSizes/frozen arenas and the loop entirely. The
+        // clamp block below is byte-identical to the one in the freeze loop (max-clamp first,
+        // then min-clamp, so min wins when min > max) and uses the same resolve references.
+        if (!isGrowing && !isShrinking) {
+            for (std::size_t i = 0; i < n; i++) {
+                Node *child = m_Items[line.ItemBegin + i];
+                const auto &dims = child->GetStyle().GetDimensions();
+                float clamped = child->GetLayout().ComputedFlexBasis;
+                if (m_IsRow) {
+                    if (dims.MaxWidth.Unit != CSSUnit::Auto)
+                        clamped = std::min(clamped, dims.MaxWidth.ResolveValue(m_AvailableWidth));
+                    if (dims.MinWidth.Unit != CSSUnit::Auto)
+                        clamped = std::max(clamped, dims.MinWidth.ResolveValue(m_AvailableWidth));
+                } else {
+                    if (dims.MaxHeight.Unit != CSSUnit::Auto)
+                        clamped = std::min(clamped, dims.MaxHeight.ResolveValue(m_AvailableHeight));
+                    if (dims.MinHeight.Unit != CSSUnit::Auto)
+                        clamped = std::max(clamped, dims.MinHeight.ResolveValue(m_AvailableHeight));
+                }
+                child->GetLayout().ComputedFlexBasis = clamped;
+            }
+            return;
+        }
+
         ArenaSlice<float> baseSizes(m_Ctx.BaseSizes);
         ArenaSlice<std::uint8_t> frozen(m_Ctx.Frozen);
         baseSizes.Resize(n);
         frozen.Resize(n);
 
+        // Item main-axis margins are invariant across the freeze loop below (they depend only
+        // on style + availableSpace, never on the basis/frozen state the loop mutates), so sum
+        // them ONCE here instead of re-resolving every item on every iteration. Reference is
+        // availableSpace, matching the former per-iteration call.
+        float fixedMainMargin = 0;
         for (std::size_t i = 0; i < n; i++) {
             Node *child = m_Items[line.ItemBegin + i];
             baseSizes[i] = child->GetLayout().ComputedFlexBasis;
+            fixedMainMargin += NeededMainAxisMargin(m_IsRow, child->GetStyle().GetMargin(), availableSpace);
             const auto &flex = child->GetStyle().GetFlex();
             frozen[i] = static_cast<std::uint8_t>(
                 (isGrowing && flex.FlexGrow == 0) || (isShrinking && flex.FlexShrink == 0) ? 1 : 0);
@@ -300,15 +338,15 @@ private:
             // Single pass: compute free space + sum unfrozen factors.
             float unfrozenFlexGrow = 0;
             float unfrozenScaledShrink = 0;
-            float freeSpace = availableSpace;
+            // Item margins consume main-axis space exactly like gaps and bases do (BuildLine
+            // already counts them in line.TakenSize), so subtract the precomputed total here —
+            // otherwise a grow item also absorbs its siblings' margins and shoves the trailing
+            // items off the container.
+            float freeSpace = availableSpace - fixedMainMargin;
             if (n > 1) freeSpace -= static_cast<float>(n - 1) * gapSize;
 
             for (std::size_t i = 0; i < n; i++) {
                 Node *child = m_Items[line.ItemBegin + i];
-                // Item margins consume main-axis space exactly like gaps and bases do (BuildLine
-                // already counts them in line.TakenSize). Subtract them here too, or a grow item
-                // also absorbs its siblings' margins and shoves the trailing items off the container.
-                freeSpace -= NeededMainAxisMargin(m_IsRow, child->GetStyle().GetMargin(), availableSpace);
                 if (frozen[i]) {
                     freeSpace -= child->GetLayout().ComputedFlexBasis; // frozen: current (clamped) basis
                 } else {
@@ -537,6 +575,7 @@ private:
                 Node *child = m_Items[i];
                 const auto &childStyle = child->GetStyle();
                 const auto &dimension = childStyle.GetDimensions();
+                const auto &margin = childStyle.GetMargin();
                 auto &childLayout = child->GetLayout();
                 float childCrossSize = m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth;
 
@@ -544,16 +583,20 @@ private:
                                            ? childStyle.GetFlex().AlignSelf
                                            : m_Style.GetFlex().Align;
 
+                // Cross-axis margins resolved ONCE against line.CrossSize (read-only in this
+                // loop), reused by both the stretch sizing and the placement below — row uses
+                // Top/Bottom, column uses Left/Right. Auto resolves to 0; the auto-margin branch
+                // overrides these locals. marginStart/marginEnd stay mutable for that override.
+                const CSSValue &crossStartEdge = m_IsRow ? margin.Top : margin.Left;
+                const CSSValue &crossEndEdge = m_IsRow ? margin.Bottom : margin.Right;
+                float marginStart = crossStartEdge.ResolveValue(line.CrossSize);
+                float marginEnd = crossEndEdge.ResolveValue(line.CrossSize);
+
                 if (alignment == AlignItems::Stretch &&
                     (m_IsRow
                          ? dimension.Height.Unit == CSSUnit::Auto
                          : dimension.Width.Unit == CSSUnit::Auto)) {
-                    const float marginsCross = m_IsRow
-                                                   ? (childStyle.GetMargin().Top.ResolveValue(line.CrossSize) +
-                                                      childStyle.GetMargin().Bottom.ResolveValue(line.CrossSize))
-                                                   : (childStyle.GetMargin().Left.ResolveValue(line.CrossSize) +
-                                                      childStyle.GetMargin().Right.ResolveValue(line.CrossSize));
-                    const float stretchedSize = line.CrossSize - marginsCross;
+                    const float stretchedSize = line.CrossSize - (marginStart + marginEnd);
                     if (stretchedSize > 0) {
                         if (m_IsRow) childLayout.ComputedHeight = stretchedSize;
                         else childLayout.ComputedWidth = stretchedSize;
@@ -561,19 +604,8 @@ private:
                     }
                 }
 
-                float marginStart = m_IsRow
-                                        ? childStyle.GetMargin().Top.ResolveValue(line.CrossSize)
-                                        : childStyle.GetMargin().Left.ResolveValue(line.CrossSize);
-                float marginEnd = m_IsRow
-                                      ? childStyle.GetMargin().Bottom.ResolveValue(line.CrossSize)
-                                      : childStyle.GetMargin().Right.ResolveValue(line.CrossSize);
-
-                const bool hasAutoStart = m_IsRow
-                                              ? childStyle.GetMargin().Top.Unit == CSSUnit::Auto
-                                              : childStyle.GetMargin().Left.Unit == CSSUnit::Auto;
-                const bool hasAutoEnd = m_IsRow
-                                            ? childStyle.GetMargin().Bottom.Unit == CSSUnit::Auto
-                                            : childStyle.GetMargin().Right.Unit == CSSUnit::Auto;
+                const bool hasAutoStart = crossStartEdge.Unit == CSSUnit::Auto;
+                const bool hasAutoEnd = crossEndEdge.Unit == CSSUnit::Auto;
                 const int autoMarginCount = (hasAutoStart ? 1 : 0) + (hasAutoEnd ? 1 : 0);
 
                 const float availableForAuto = line.CrossSize - childCrossSize - (marginStart + marginEnd);

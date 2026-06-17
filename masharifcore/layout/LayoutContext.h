@@ -65,6 +65,17 @@ namespace masharif {
     /// stack by the public entry points and threaded by reference through the recursion;
     /// capacities stay warm for the whole solve, so steady-state layout does not allocate.
     struct LayoutContext {
+        /// Warm the scratch arenas so the first solve of a frame does not pay a geometric
+        /// reallocation series as items/lines are appended. Capacity-only — never changes
+        /// size(), so every ArenaSlice base offset and the re-indexing rule are unaffected
+        /// (it can only reduce reallocations, never introduce one).
+        LayoutContext() {
+            InFlowItems.reserve(64);
+            Lines.reserve(8);
+            BaseSizes.reserve(64);
+            Frozen.reserve(64);
+        }
+
         std::vector<Node *> InFlowItems;
         std::vector<FlexLine> Lines;
         std::vector<float> BaseSizes;

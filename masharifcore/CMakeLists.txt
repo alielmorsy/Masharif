@@ -13,32 +13,31 @@ file(GLOB SOURCES CONFIGURE_DEPENDS
 add_library(masharifcore STATIC ${SOURCES})
 add_library(masharif::masharifcore ALIAS masharifcore)
 
-check_ipo_supported(RESULT result)
-if (result)
+# Enable whole-program optimization (LTO/IPO) for optimized configs. The target property
+# is INTERPROCEDURAL_OPTIMIZATION — the CMAKE_-prefixed name is the *variable* that seeds
+# it, so setting `CMAKE_INTERPROCEDURAL_OPTIMIZATION` as a target property (as before) was a
+# silent no-op (zero /GL, zero /LTCG ever emitted). Per-config so Debug stays fast to link.
+# masharifcore is STATIC, so its /GL objects are only combined at the consumer link — the
+# consumer targets (unit_tests, example) set the same property to pull in /LTCG.
+check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_message)
+if (_ipo_supported)
     set_target_properties(masharifcore PROPERTIES
-            CMAKE_INTERPROCEDURAL_OPTIMIZATION true)
+            INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+            INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+else ()
+    message(STATUS "masharifcore: IPO/LTO not supported: ${_ipo_message}")
 endif ()
 
-if (MSVC)
-    add_compile_options(/fp:fast)
-elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-ffast-math)
-endif ()
+# NOTE: fast-math is intentionally NOT enabled. Combined with whole-program optimization
+# (LTO/IPO above) it reassociates floating-point across function boundaries, which shifts
+# computed positions past ASSERT_FLOAT_EQ tolerance AND flips the exact `==` cache-hit
+# comparisons in Node::LayoutImpl (changing StrategyRuns) — it broke 3 covered FlexTests.
+# Standard /fp:precise keeps layout results deterministic across the LTO boundary.
 
-
-if (CMAKE_BUILD_TYPE STREQUAL "Release")
-    if (MSVC)
-        add_compile_options(
-                /O2
-                /Ob2
-        )
-    elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        add_compile_options(
-                -O2
-                -finline-functions
-        )
-    endif ()
-endif ()
+# Per-config -O flags come from CMake's own defaults (MSVC Release = /O2 /Ob2 /DNDEBUG;
+# GCC/Clang Release = -O3 -DNDEBUG). The former explicit `if(CMAKE_BUILD_TYPE STREQUAL
+# "Release") /O2 /Ob2` block was redundant on MSVC, a downgrade (-O2 vs -O3) on GCC/Clang,
+# and never fired under multi-config generators (empty CMAKE_BUILD_TYPE) — removed.
 
 
 target_include_directories(masharifcore PUBLIC 

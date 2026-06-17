@@ -42,7 +42,7 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         const auto position = childStyle.GetDimensions().Position;
         if (position != PositionType::Static &&
             position != PositionType::Relative) {
-            container.m_OutOfFlowChildren.push_back(child);
+            container.m_OutOfFlowChildren.push_back(child.get());
             continue;
         }
         auto &childLayout = child->GetLayout();
