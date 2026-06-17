@@ -153,9 +153,25 @@ private:
                 childLayout.ComputedFlexBasis = childStyle.GetFlex().FlexBasis.ResolveValue(basisRef) + pb;
             }
 
-            m_TotalMainSize += childLayout.ComputedFlexBasis;
+            // Main-axis margins occupy main-axis space alongside the basis (BuildLine counts them
+            // when packing a line), so they belong in the content total: a shrink-to-fit (AUTO) main
+            // axis must enclose its children's MARGIN boxes, not just their border boxes.
+            m_TotalMainSize += childLayout.ComputedFlexBasis
+                               + NeededMainAxisMargin(m_IsRow, childStyle.GetMargin(), basisRef);
             m_MaxCrossSize = std::max(m_MaxCrossSize,
                                       m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth);
+        }
+
+        // Inter-item gaps occupy main-axis space too (BuildLine adds gapSize between items); fold the
+        // single line's (count-1) gaps into the content total, or an AUTO main axis collapses by exactly
+        // the gaps and its children spill past it. Mirrors BuildLine's gap axis: row-gap stacks a column,
+        // column-gap a row. (NoWrap single line — the only shape this engine emits.)
+        if (count > 1)
+        {
+            const auto &gaps = m_Style.GetFlex().Gaps;
+            m_TotalMainSize += static_cast<float>(count - 1)
+                               * (m_IsRow ? gaps.Column.ResolveValue(m_AvailableWidth)
+                                          : gaps.Row.ResolveValue(m_AvailableHeight));
         }
     }
 
