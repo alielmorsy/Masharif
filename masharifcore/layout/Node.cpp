@@ -111,6 +111,13 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
             // flags before that solve runs.
             continue;
         }
+        // A display:none subtree generates no boxes: its strategy never ran this frame, so its
+        // descendants' out-of-flow lists may be stale (and, with raw-pointer storage, dangling).
+        // Do not derive positions for it or walk into it.
+        if (child->GetStyle().GetDimensions().Display == OuterDisplay::None)
+        {
+            continue;
+        }
         auto& childLayout = child->m_Layout;
         // Derive absolute from stable local (idempotent: a skipped clean subtree still
         // lands correctly when an ancestor moves).
@@ -136,6 +143,14 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
 
 void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
 {
+    // A display:none node generates no boxes, and its strategy did not run this frame
+    // (LayoutImpl returns early), so m_OutOfFlowChildren was not rebuilt and may hold stale —
+    // with raw-pointer storage, even dangling — entries. Drop them and skip the hidden subtree.
+    if (m_Style.GetDimensions().Display == OuterDisplay::None)
+    {
+        m_OutOfFlowChildren.clear();
+        return;
+    }
     for (Node* const child : m_OutOfFlowChildren)
     {
         Node* ancestor = nullptr;

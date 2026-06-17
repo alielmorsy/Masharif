@@ -88,11 +88,15 @@ private:
         // matches the items the sort sees (out-of-flow children are never ordered).
         bool anyOrder = false;
         for (auto &child: m_Container.m_Children) {
+            // display:none generates no box at all — skip it for BOTH in-flow and out-of-flow
+            // layout. It must not enter m_OutOfFlowChildren (it would be measured and positioned
+            // as a 0x0 box) nor m_Items.
+            if (child->GetStyle().GetDimensions().Display == OuterDisplay::None)
+                continue;
             const auto pos = child->GetStyle().GetDimensions().Position;
-            const auto display = child->GetStyle().GetDimensions().Display;
             if (pos != PositionType::Static && pos != PositionType::Relative) {
                 m_Container.m_OutOfFlowChildren.push_back(child.get());
-            } else if (display != OuterDisplay::None) {
+            } else {
                 m_Items.Append(child.get());
                 anyOrder = anyOrder || child->GetStyle().GetFlex().Order != 0;
             }

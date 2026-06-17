@@ -39,6 +39,11 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
     for (const auto &child: container.m_Children) {
         const auto &childStyle = child->GetStyle();
 
+        // display:none generates no box — skip entirely (in-flow and out-of-flow alike), so it
+        // never enters m_OutOfFlowChildren.
+        if (childStyle.GetDimensions().Display == OuterDisplay::None)
+            continue;
+
         const auto position = childStyle.GetDimensions().Position;
         if (position != PositionType::Static &&
             position != PositionType::Relative) {
