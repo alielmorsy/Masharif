@@ -176,7 +176,9 @@ namespace masharif
         std::vector<SharedNode> m_Children;
 
         /// Out-of-flow (absolute/fixed/sticky) children diverted by the last strategy run;
-        /// consumed (laid out + positioned) by the positions walk, then cleared.
+        /// (re-)laid-out and positioned by the positions walk. Persisted (not cleared after
+        /// positioning) so a move-only frame can re-position them against a moved containing
+        /// block; the strategy clears and repopulates it on every real layout run.
         std::vector<SharedNode> m_OutOfFlowChildren;
 
         /// Set by MarkDirtyToRoot on every ancestor of a changed node. A node with neither

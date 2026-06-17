@@ -56,6 +56,19 @@ namespace
             default:                     return 0.0f; // FlexStart, Stretch, Baseline, AutoAlign
         }
     }
+
+    /// Available space to measure an out-of-flow child on one axis. An explicit size keeps the
+    /// containing-block extent (its percentage basis). An AUTO size pinned by BOTH insets fills
+    /// the gap between them. An AUTO size otherwise shrink-to-fits its content (CSS abs/shrink-to-
+    /// fit), signalled to the solver with NaN — handing it a definite extent instead would stretch
+    /// the box to the whole containing block (the overlay-fills-the-screen bug).
+    float OutOfFlowAvailable(const CSSValue& size, const CSSValue& start, const CSSValue& end, float ref)
+    {
+        if (size.Unit != CSSUnit::Auto) return ref;
+        if (start.Unit != CSSUnit::Auto && end.Unit != CSSUnit::Auto)
+            return std::max(0.0f, ref - start.ResolveValue(ref) - end.ResolveValue(ref));
+        return NAN;
+    }
 }
 
 void Node::RemoveChild(SharedNode& child)
@@ -130,9 +143,13 @@ void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
         auto position = child->GetStyle().GetDimensions().Position;
         if (position == PositionType::Fixed)
         {
-            // TODO: resolve against the viewport as containing block.
-            refWidth = 0;
-            refHeight = 0;
+            // The containing block is the surface/viewport — the root node (it is pinned to the
+            // surface extent). Resolve against the root's content box exactly like an absolute child
+            // of the root, so Fixed pins to (or centres within) the viewport regardless of nesting.
+            ancestor = child.get();
+            while (ancestor->Parent()) ancestor = ancestor->Parent();
+            refWidth = ancestor->m_Layout.ComputedWidth;
+            refHeight = ancestor->m_Layout.ComputedHeight;
         }
         else
         {
@@ -141,7 +158,13 @@ void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
             refHeight = ancestor->m_Layout.ComputedHeight;
         }
 
-        child->LayoutImpl(ctx, refWidth, refHeight);
+        // Measure against the containing block, but let an AUTO axis shrink-to-fit instead of
+        // stretching to fill it (the cross axis would otherwise fill the whole block).
+        const auto& cdim = child->GetStyle().GetDimensions();
+        const float availW = OutOfFlowAvailable(cdim.Width, cdim.Left, cdim.Right, refWidth);
+        const float availH = OutOfFlowAvailable(cdim.Height, cdim.Top, cdim.Bottom, refHeight);
+
+        child->LayoutImpl(ctx, availW, availH);
 
         if (position == PositionType::Sticky)
         {
@@ -153,12 +176,11 @@ void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
         }
 
         // The main walk skips out-of-flow subtrees entirely; derive their descendants'
-        // absolute coordinates from the origin just set, and consume nested out-of-flow
+        // absolute coordinates from the origin just set, and re-position nested out-of-flow
         // lists. This runs in the same frame — no one-frame lag, no stale fix-ups.
         child->StartUpdatingPositions(ctx);
         child->PositionOutOfFlowChildren(ctx);
     }
-    m_OutOfFlowChildren.clear();
 }
 
 void Node::Calculate(float availableWidth, float availableHeight)
