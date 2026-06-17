@@ -179,7 +179,12 @@ namespace masharif
         /// (re-)laid-out and positioned by the positions walk. Persisted (not cleared after
         /// positioning) so a move-only frame can re-position them against a moved containing
         /// block; the strategy clears and repopulates it on every real layout run.
-        std::vector<SharedNode> m_OutOfFlowChildren;
+        ///
+        /// Non-owning: each entry is a live element of m_Children (the parent owns it for the
+        /// node's whole lifetime), so raw pointers avoid per-strategy-run atomic refcount
+        /// churn. Safe because every child-list mutator calls MarkDirtyToRoot, forcing the
+        /// strategy to clear+rebuild this list before the positions walk ever consumes it.
+        std::vector<Node*> m_OutOfFlowChildren;
 
         /// Set by MarkDirtyToRoot on every ancestor of a changed node. A node with neither
         /// m_Style.Dirty nor m_DescendantDirty (and unchanged space) reuses its cached layout.

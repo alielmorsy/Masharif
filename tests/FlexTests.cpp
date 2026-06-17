@@ -815,3 +815,54 @@ TEST(FlexTests, flex_wrap_wrap) {
     ASSERT_FLOAT_EQ(0.0f, child1->GetLayout().ComputedX);
     ASSERT_FLOAT_EQ(40.0f, child1->GetLayout().ComputedY);
 }
+
+// Guard for the CSS `order` sort branch in CollectAndOrderItems (previously untested):
+// a child with a larger `order` must be placed after one with a smaller `order`,
+// regardless of DOM sequence.
+TEST(FlexTests, order_overrides_dom_sequence) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<Dimensions>().Width = 100.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 100.0f;
+
+    auto a = std::make_shared<Node>(); // added first, but order 2
+    a->GetStyle().Modify<Dimensions>().Width = 30.0f;
+    a->GetStyle().Modify<Dimensions>().Height = 30.0f;
+    a->GetStyle().Modify<CSSFlex>().Order = 2;
+    root->AddChild(a);
+
+    auto b = std::make_shared<Node>(); // added second, but order 1
+    b->GetStyle().Modify<Dimensions>().Width = 30.0f;
+    b->GetStyle().Modify<Dimensions>().Height = 30.0f;
+    b->GetStyle().Modify<CSSFlex>().Order = 1;
+    root->AddChild(b);
+
+    root->Calculate(100.0f, 100.0f);
+
+    // ascending order => b (1) before a (2)
+    ASSERT_FLOAT_EQ(0.0f, b->GetLayout().ComputedX);
+    ASSERT_FLOAT_EQ(30.0f, a->GetLayout().ComputedX);
+}
+
+// Guard for percent cross-axis margin resolution in AlignLinesOnCrossAxis (previously
+// untested): margin-top is the cross-start edge of a row, resolved against the line's
+// cross size (the definite container height here = 100), so 10% => 10px offset.
+TEST(FlexTests, percent_cross_margin_offsets_item) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex); // default direction Row
+    root->GetStyle().Modify<Dimensions>().Width = 200.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 100.0f;
+
+    auto child = std::make_shared<Node>();
+    child->GetStyle().Modify<Dimensions>().Width = 50.0f;
+    child->GetStyle().Modify<Dimensions>().Height = 30.0f; // explicit => no stretch resize
+    child->GetStyle().Modify<MarginEdge>().Top = CSSValue(10.0f, CSSUnit::Percent);
+    root->AddChild(child);
+
+    root->Calculate(200.0f, 100.0f);
+
+    ASSERT_FLOAT_EQ(0.0f, child->GetLayout().ComputedX);
+    ASSERT_FLOAT_EQ(10.0f, child->GetLayout().ComputedY); // 10% of line cross size (100)
+    ASSERT_FLOAT_EQ(50.0f, child->GetLayout().ComputedWidth);
+    ASSERT_FLOAT_EQ(30.0f, child->GetLayout().ComputedHeight);
+}

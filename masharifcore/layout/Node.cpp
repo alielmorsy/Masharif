@@ -136,7 +136,7 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
 
 void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
 {
-    for (const auto& child : m_OutOfFlowChildren)
+    for (Node* const child : m_OutOfFlowChildren)
     {
         Node* ancestor = nullptr;
         float refWidth, refHeight;
@@ -146,14 +146,14 @@ void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
             // The containing block is the surface/viewport — the root node (it is pinned to the
             // surface extent). Resolve against the root's content box exactly like an absolute child
             // of the root, so Fixed pins to (or centres within) the viewport regardless of nesting.
-            ancestor = child.get();
+            ancestor = child;
             while (ancestor->Parent()) ancestor = ancestor->Parent();
             refWidth = ancestor->m_Layout.ComputedWidth;
             refHeight = ancestor->m_Layout.ComputedHeight;
         }
         else
         {
-            ancestor = FindContainingBlock(child.get());
+            ancestor = FindContainingBlock(child);
             refWidth = ancestor->m_Layout.ComputedWidth;
             refHeight = ancestor->m_Layout.ComputedHeight;
         }
