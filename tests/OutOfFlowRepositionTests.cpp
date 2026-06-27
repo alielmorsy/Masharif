@@ -111,6 +111,40 @@ TEST(OutOfFlowRepositionTests, hidden_containing_block_does_not_reposition_abs_c
     EXPECT_FLOAT_EQ(70.0f, abs->GetLayout().ComputedX); // re-anchored once visible again
 }
 
+// The viewport transport HUD: an absolute flex Row pinned with Left=0 AND Right=0 (no explicit
+// width) must stretch to the full width of its containing block, then Justify=FlexCenter centers a
+// single content-sized child. Both insets being 0 is the trigger — the bar slid to the left (pill
+// at x=0) when the abs width shrink-wrapped to its content instead of honouring the both-insets
+// stretch, leaving no free space for justify-content to distribute.
+TEST(OutOfFlowRepositionTests, absolute_both_insets_zero_centers_flex_child) {
+    auto root = std::make_shared<Node>();
+    root->GetStyle().Modify<Dimensions>().Width = 200.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 200.0f;
+
+    auto bar = std::make_shared<Node>();
+    bar->SetDisplay(OuterDisplay::Flex);
+    bar->GetStyle().Modify<Dimensions>().Position = PositionType::Absolute;
+    bar->GetStyle().Modify<Dimensions>().Left = 0.0f;
+    bar->GetStyle().Modify<Dimensions>().Right = 0.0f;
+    bar->GetStyle().Modify<Dimensions>().Top = 12.0f;
+    bar->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+    bar->GetStyle().Modify<CSSFlex>().Justify = JustifyContent::FlexCenter;
+    bar->GetStyle().Modify<CSSFlex>().Align = AlignItems::FlexCenter;
+    root->AddChild(bar);
+
+    auto pill = std::make_shared<Node>();
+    pill->GetStyle().Modify<Dimensions>().Width = 60.0f;
+    pill->GetStyle().Modify<Dimensions>().Height = 28.0f;
+    bar->AddChild(pill);
+
+    root->Calculate(200.0f, 200.0f);
+
+    ASSERT_FLOAT_EQ(200.0f, bar->GetLayout().ComputedWidth); // stretched to both insets, not content-sized
+    ASSERT_FLOAT_EQ(0.0f, bar->GetLayout().ComputedX);
+    ASSERT_FLOAT_EQ(12.0f, bar->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(70.0f, pill->GetLayout().ComputedX); // (200 - 60) / 2, centered within the stretched bar
+}
+
 // Nested case: a display:none ANCESTOR with a still-visible child that owns an absolute
 // grandchild. The visible child's strategy cannot run inside the hidden subtree, so its
 // out-of-flow list keeps a dangling raw pointer once the grandchild is freed — the walk must

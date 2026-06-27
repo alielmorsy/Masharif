@@ -24,7 +24,7 @@ namespace
         Node* current = child->Parent();
         if (!current) return child;
         while (current->Parent() &&
-               current->GetStyle().GetDimensions().Position == PositionType::Static)
+            current->GetStyle().GetDimensions().Position == PositionType::Static)
         {
             current = current->Parent();
         }
@@ -38,11 +38,11 @@ namespace
     {
         switch (justify)
         {
-            case JustifyContent::FlexEnd:      return freeSpace;
-            case JustifyContent::FlexCenter:
-            case JustifyContent::SpaceAround:
-            case JustifyContent::SpaceEvenly:  return freeSpace * 0.5f;
-            default:                           return 0.0f; // FlexStart, SpaceBetween, Stretch
+        case JustifyContent::FlexEnd: return freeSpace;
+        case JustifyContent::FlexCenter:
+        case JustifyContent::SpaceAround:
+        case JustifyContent::SpaceEvenly: return freeSpace * 0.5f;
+        default: return 0.0f; // FlexStart, SpaceBetween, Stretch
         }
     }
 
@@ -51,9 +51,9 @@ namespace
     {
         switch (align)
         {
-            case AlignItems::FlexEnd:    return freeSpace;
-            case AlignItems::FlexCenter: return freeSpace * 0.5f;
-            default:                     return 0.0f; // FlexStart, Stretch, Baseline, AutoAlign
+        case AlignItems::FlexEnd: return freeSpace;
+        case AlignItems::FlexCenter: return freeSpace * 0.5f;
+        default: return 0.0f; // FlexStart, Stretch, Baseline, AutoAlign
         }
     }
 
@@ -179,7 +179,18 @@ void Node::PositionOutOfFlowChildren(LayoutContext& ctx)
         const float availW = OutOfFlowAvailable(cdim.Width, cdim.Left, cdim.Right, refWidth);
         const float availH = OutOfFlowAvailable(cdim.Height, cdim.Top, cdim.Bottom, refHeight);
 
+        const bool widthPinned = cdim.Width.Unit == CSSUnit::Auto &&
+            cdim.Left.Unit != CSSUnit::Auto && cdim.Right.Unit != CSSUnit::Auto;
+        const bool heightPinned = cdim.Height.Unit == CSSUnit::Auto &&
+            cdim.Top.Unit != CSSUnit::Auto && cdim.Bottom.Unit != CSSUnit::Auto;
+        const bool childIsRow = child->GetStyle().GetFlex().IsRow();
+        child->m_mainSizeDefinite = childIsRow ? widthPinned : heightPinned;
+        child->m_crossSizeDefinite = childIsRow ? heightPinned : widthPinned;
+
         child->LayoutImpl(ctx, availW, availH);
+
+        child->m_mainSizeDefinite = false;
+        child->m_crossSizeDefinite = false;
 
         if (position == PositionType::Sticky)
         {
