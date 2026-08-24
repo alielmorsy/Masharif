@@ -14,7 +14,7 @@ Complete support for Flexbox properties:
   - `flex-direction`: `row`, `row-reverse`, `column`, `column-reverse`
   - `flex-wrap`: `nowrap`, `wrap`, `wrap-reverse`
   - `justify-content`: `flex-start`, `flex-end`, `center`, `space-between`, `space-around`, `space-evenly`
-  - `align-items`: `flex-start`, `flex-end`, `center`, `baseline`, `stretch`
+  - `align-items`: `flex-start`, `flex-end`, `center`, `stretch`
   - `align-content`: `flex-start`, `flex-end`, `center`, `space-between`, `space-around`, `stretch`
   - `gap`: Row and Column gaps
 

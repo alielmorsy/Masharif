@@ -86,7 +86,11 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
                 lineHeight = 0.0f;
             }
 
-            childLayout.LocalX = containerPadding.Left.Value + containerBorder.WidthLeft.Value;
+            // ComputeDimensions already shrank an AUTO-width child by both its margins; without
+            // adding margin-left here that reserved space silently shifts to the right edge
+            // instead of padding the left one.
+            childLayout.LocalX = containerPadding.Left.Value + containerBorder.WidthLeft.Value
+                                  + childMargin.Left.Value;
             childLayout.LocalY = currentY + containerPadding.Top.Value + containerBorder.WidthTop.Value;
             currentY += childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value;
         } else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {

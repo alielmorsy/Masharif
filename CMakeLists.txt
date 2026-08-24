@@ -14,3 +14,4 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON) # never silently downgrade to an older stand
 add_subdirectory(masharifcore)
 add_subdirectory(example)
 add_subdirectory(tests)
+add_subdirectory(tools/browser_layout_check)

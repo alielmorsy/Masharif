@@ -845,8 +845,9 @@ TEST(FlexTests, order_overrides_dom_sequence) {
 }
 
 // Guard for percent cross-axis margin resolution in AlignLinesOnCrossAxis (previously
-// untested): margin-top is the cross-start edge of a row, resolved against the line's
-// cross size (the definite container height here = 100), so 10% => 10px offset.
+// untested): margin-top is the cross-start edge of a row, but CSS resolves EVERY percentage
+// margin -- including top/bottom -- against the containing block's WIDTH (200 here), never
+// its height or the line's cross size. So 10% => 20px, not 10% of the 100px cross size.
 TEST(FlexTests, percent_cross_margin_offsets_item) {
     auto root = std::make_shared<Node>();
     root->SetDisplay(OuterDisplay::Flex); // default direction Row
@@ -862,7 +863,7 @@ TEST(FlexTests, percent_cross_margin_offsets_item) {
     root->Calculate(200.0f, 100.0f);
 
     ASSERT_FLOAT_EQ(0.0f, child->GetLayout().ComputedX);
-    ASSERT_FLOAT_EQ(10.0f, child->GetLayout().ComputedY); // 10% of line cross size (100)
+    ASSERT_FLOAT_EQ(20.0f, child->GetLayout().ComputedY); // 10% of container width (200)
     ASSERT_FLOAT_EQ(50.0f, child->GetLayout().ComputedWidth);
     ASSERT_FLOAT_EQ(30.0f, child->GetLayout().ComputedHeight);
 }

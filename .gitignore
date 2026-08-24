@@ -31,3 +31,6 @@
 *.out
 *.app
 cmake-*/
+
+# IDE project settings
+.idea/

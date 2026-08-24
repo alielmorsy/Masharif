@@ -69,6 +69,29 @@ namespace
             return std::max(0.0f, ref - start.ResolveValue(ref) - end.ResolveValue(ref));
         return NAN;
     }
+
+    /// CSS 10.6.4: an out-of-flow box with `height: auto` and BOTH `top` and `bottom` set resolves
+    /// its height to fill the gap between them rather than shrinking to its content.
+    /// OutOfFlowAvailable already hands such a box that gap as its available height; this predicate
+    /// is what stops the normal-flow AUTO-height rule (ApplyBlockAutoHeight, which sees a childless
+    /// box as zero-height) from overwriting it. The width side needs no equivalent: the AUTO-width
+    /// branch of ComputeDimensions already fills the available space it is given.
+    bool AutoHeightFillsInsetGap(const Dimensions& d)
+    {
+        if (d.Position == PositionType::Static || d.Position == PositionType::Relative) return false;
+        return d.Height.Unit == CSSUnit::Auto
+            && d.Top.Unit != CSSUnit::Auto && d.Bottom.Unit != CSSUnit::Auto;
+    }
+
+    /// One axis of a `position: relative` shift: the start inset moves the box positively, the
+    /// end inset negatively, and an AUTO inset contributes nothing (ResolveValue maps Auto to 0).
+    /// `reference` is the containing block's extent ON THIS AXIS -- unlike percentage margins and
+    /// paddings, which always resolve against width, a percentage `top`/`bottom` inset resolves
+    /// against the containing block's height.
+    float RelativeShift(const CSSValue& start, const CSSValue& end, float reference)
+    {
+        return start.ResolveValue(reference) - end.ResolveValue(reference);
+    }
 }
 
 void Node::RemoveChild(SharedNode& child)
@@ -100,6 +123,15 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
 
     const float absX = m_Layout.ComputedX;
     const float absY = m_Layout.ComputedY;
+
+    // Containing block for a relative child's percentage insets: this node's content box.
+    const float cbWidth = std::max(0.0f, m_Layout.ComputedWidth
+                                         - m_Style.GetPadding().Left - m_Style.GetPadding().Right
+                                         - m_Style.GetBorder().WidthLeft - m_Style.GetBorder().WidthRight);
+    const float cbHeight = std::max(0.0f, m_Layout.ComputedHeight
+                                          - m_Style.GetPadding().Top - m_Style.GetPadding().Bottom
+                                          - m_Style.GetBorder().WidthTop - m_Style.GetBorder().WidthBottom);
+
     for (auto& child : m_Children)
     {
         auto& position = child->GetStyle().GetDimensions().Position;
@@ -119,10 +151,23 @@ void Node::StartUpdatingPositions(LayoutContext& ctx)
             continue;
         }
         auto& childLayout = child->m_Layout;
+
+        // `position: relative` is applied HERE rather than while the box was being laid out:
+        // the strategies overwrite LocalX/LocalY wholesale, and CSS defines the shift as purely
+        // visual anyway -- the box keeps its normal-flow position for every other purpose, so
+        // siblings (which stack from LocalY/ComputedHeight, untouched below) never see it.
+        float relX = 0.0f, relY = 0.0f;
+        if (position == PositionType::Relative)
+        {
+            const auto& insets = child->m_Style.GetDimensions();
+            relX = RelativeShift(insets.Left, insets.Right, cbWidth);
+            relY = RelativeShift(insets.Top, insets.Bottom, cbHeight);
+        }
+
         // Derive absolute from stable local (idempotent: a skipped clean subtree still
         // lands correctly when an ancestor moves).
-        const float newX = absX + childLayout.LocalX;
-        const float newY = absY + childLayout.LocalY;
+        const float newX = absX + childLayout.LocalX + relX;
+        const float newY = absY + childLayout.LocalY + relY;
         // NaN-safe: NaN != NaN forces a visit, never a skip.
         const bool originChanged = newX != childLayout.ComputedX || newY != childLayout.ComputedY;
         childLayout.ComputedX = newX;
@@ -304,18 +349,19 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
     m_strategyRanSinceDefinite = true;
     m_positionsDirty = true;
 
-    if (auto& position = m_Style.GetDimensions().Position; position == PositionType::Relative)
-    {
-        auto& offset = m_Style.GetOffsets();
-        m_Layout.LocalX += offset.Left.ResolveValue(availableWidth) - offset.Right.ResolveValue(availableWidth);
-        m_Layout.LocalY += offset.Top.ResolveValue(availableHeight) - offset.Bottom.ResolveValue(availableHeight);
-    }
+    // NOTE: `position: relative` offsets are deliberately NOT applied here. Every strategy
+    // assigns its children's LocalX/LocalY wholesale after this returns (NormalFlowStrategy's
+    // block branch, PositionLineOnMainAxis, AlignLinesOnCrossAxis), so a shift written at this
+    // point is overwritten before anything reads it. It is applied in StartUpdatingPositions
+    // instead, which is also where CSS puts it semantically: a relative box is laid out in
+    // normal flow and only then visually offset, affecting nothing else's layout.
 
     // Only Block/InlineBlock get an AUTO-height override; flex handles its own height.
     const auto display = m_Style.GetDimensions().Display;
     const bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
 
-    if (isBlock && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto)
+    if (isBlock && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto
+        && !AutoHeightFillsInsetGap(m_Style.GetDimensions()))
         ApplyBlockAutoHeight();
 
     // Remember this run's content-box size for the reuse early-out (the parent may mutate
@@ -603,6 +649,19 @@ void Node::ComputeDimensions(LayoutContext& ctx, float availableWidth, float ava
         {
             computedHeight = availableHeight * (height.Value / 100.0f);
         }
+    }
+    else if (AutoHeightFillsInsetGap(dimensions) && !std::isnan(availableHeight))
+    {
+        // availableHeight is already the top..bottom gap (Node.cpp's OutOfFlowAvailable). Shaped
+        // like the AUTO-width branch above: subtract margins, padding and border here, because the
+        // `!heightIsExplicit` clause below re-adds padding+border — the two together net out to
+        // "fill the gap, less this box's own margins". Percentage margins resolve against the
+        // containing block's WIDTH on every side, hence availableWidth as their reference.
+        auto& margin = m_Style.GetMargin();
+        computedHeight = std::max(0.0f, availableHeight
+                                        - margin.Top.ResolveValue(availableWidth)
+                                        - margin.Bottom.ResolveValue(availableWidth)
+                                        - verticalPadding);
     }
     if (!std::isnan(computedHeight))
     {

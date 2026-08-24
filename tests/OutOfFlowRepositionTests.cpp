@@ -90,8 +90,8 @@ TEST(OutOfFlowRepositionTests, hidden_containing_block_does_not_reposition_abs_c
 
     auto abs = std::make_shared<Node>();
     abs->GetStyle().Modify<Dimensions>().Position = PositionType::Absolute;
-    // Right-anchored: Left must be AUTO (insets default to 0px, which would left-anchor), so the
-    // X position depends on the containing block's width — the value the bug would corrupt.
+    // Right-anchored: Left defaults to AUTO, so this is redundant but kept explicit for
+    // clarity. X position depends on the containing block's width — the value the bug would corrupt.
     abs->GetStyle().Modify<Dimensions>().Left = CSSValue(0.0f, CSSUnit::Auto);
     abs->GetStyle().Modify<Dimensions>().Right = 10.0f;
     abs->GetStyle().Modify<Dimensions>().Top = 0.0f;

@@ -15,10 +15,13 @@
 using namespace masharif;
 
 namespace {
-    float NeededMainAxisMargin(const bool isRow, const MarginEdge &margin, const float mainAxisSize) {
+    /// CSS resolves EVERY percentage margin -- including top/bottom -- against the containing
+    /// block's WIDTH, never its height. `widthRef` must always be a width, regardless of which
+    /// pair of edges (Left/Right for a row's main axis, Top/Bottom for a column's) is being summed.
+    float NeededMainAxisMargin(const bool isRow, const MarginEdge &margin, const float widthRef) {
         if (isRow)
-            return margin.Left.ResolveValue(mainAxisSize) + margin.Right.ResolveValue(mainAxisSize);
-        return margin.Top.ResolveValue(mainAxisSize) + margin.Bottom.ResolveValue(mainAxisSize);
+            return margin.Left.ResolveValue(widthRef) + margin.Right.ResolveValue(widthRef);
+        return margin.Top.ResolveValue(widthRef) + margin.Bottom.ResolveValue(widthRef);
     }
 }
 
@@ -48,20 +51,26 @@ public:
         ResolveContainerSize();
 
         const float availableMainAxisSize = m_IsRow ? m_AvailableWidth : m_AvailableHeight;
+        const auto &border = m_Style.GetBorder();
+        // crossPos is the container's own content-box origin along the cross axis: padding AND
+        // border inset it, same as the absolute-positioning containing-block origin does.
         float crossPos = m_IsRow
-                             ? m_Style.GetPadding().Top.ResolveValue(m_AvailableWidth)
-                             : m_Style.GetPadding().Left.ResolveValue(m_AvailableWidth);
+                             ? m_Style.GetPadding().Top.ResolveValue(m_AvailableWidth) + border.WidthTop.Value
+                             : m_Style.GetPadding().Left.ResolveValue(m_AvailableWidth) + border.WidthLeft.Value;
 
         // Invariant across the line loop: the container's main size and paddings do not
         // change while lines are built and placed.
         const float containerMainSize = m_IsRow ? m_Layout.ComputedWidth : m_Layout.ComputedHeight;
         const auto &padding = m_Style.GetPadding();
+        // Percentage padding always resolves against the container's WIDTH (CSS rule, all four
+        // sides) -- not `containerMainSize`, which is the container's HEIGHT for a column. Border
+        // is added alongside padding: both inset the content-box origin from the border-box edge.
         const float padStart = m_IsRow
-                                   ? padding.Left.ResolveValue(containerMainSize)
-                                   : padding.Top.ResolveValue(containerMainSize);
+                                   ? padding.Left.ResolveValue(m_Layout.ComputedWidth) + border.WidthLeft.Value
+                                   : padding.Top.ResolveValue(m_Layout.ComputedWidth) + border.WidthTop.Value;
         const float padEnd = m_IsRow
-                                 ? padding.Right.ResolveValue(containerMainSize)
-                                 : padding.Bottom.ResolveValue(containerMainSize);
+                                 ? padding.Right.ResolveValue(m_Layout.ComputedWidth) + border.WidthRight.Value
+                                 : padding.Bottom.ResolveValue(m_Layout.ComputedWidth) + border.WidthBottom.Value;
         const float availableSpace = containerMainSize - padStart - padEnd;
 
         while (m_NextItem < m_Items.Count()) {
@@ -223,7 +232,7 @@ private:
             // when packing a line), so they belong in the content total: a shrink-to-fit (AUTO) main
             // axis must enclose its children's MARGIN boxes, not just their border boxes.
             m_TotalMainSize += hypothetical
-                               + NeededMainAxisMargin(m_IsRow, childStyle.GetMargin(), basisRef);
+                               + NeededMainAxisMargin(m_IsRow, childStyle.GetMargin(), m_AvailableWidth);
             m_MaxCrossSize = std::max(m_MaxCrossSize,
                                       m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth);
         }
@@ -383,14 +392,15 @@ private:
         frozen.Resize(n);
 
         // Item main-axis margins are invariant across the freeze loop below (they depend only
-        // on style + availableSpace, never on the basis/frozen state the loop mutates), so sum
-        // them ONCE here instead of re-resolving every item on every iteration. Reference is
-        // availableSpace, matching the former per-iteration call.
+        // on style + width, never on the basis/frozen state the loop mutates), so sum them ONCE
+        // here instead of re-resolving every item on every iteration. Percentage margins always
+        // resolve against the container's WIDTH (CSS rule), not `availableSpace` -- which is a
+        // height for a column container.
         float fixedMainMargin = 0;
         for (std::size_t i = 0; i < n; i++) {
             Node *child = m_Items[line.ItemBegin + i];
             baseSizes[i] = child->GetLayout().ComputedFlexBasis;
-            fixedMainMargin += NeededMainAxisMargin(m_IsRow, child->GetStyle().GetMargin(), availableSpace);
+            fixedMainMargin += NeededMainAxisMargin(m_IsRow, child->GetStyle().GetMargin(), m_AvailableWidth);
             const auto &flex = child->GetStyle().GetFlex();
             frozen[i] = static_cast<std::uint8_t>(
                 (isGrowing && flex.FlexGrow == 0) || (isShrinking && flex.FlexShrink == 0) ? 1 : 0);
@@ -540,12 +550,14 @@ private:
                 autoRemainingSpace -= itemSpace;
                 autoMarginItems--;
             } else {
+                // Percentage margins always resolve against the container's WIDTH, including
+                // Top/Bottom in a column container -- never m_AvailableHeight.
                 marginStart = m_IsRow
                                   ? childStyle.GetMargin().Left.ResolveValue(m_AvailableWidth)
-                                  : childStyle.GetMargin().Top.ResolveValue(m_AvailableHeight);
+                                  : childStyle.GetMargin().Top.ResolveValue(m_AvailableWidth);
                 marginEnd = m_IsRow
                                 ? childStyle.GetMargin().Right.ResolveValue(m_AvailableWidth)
-                                : childStyle.GetMargin().Bottom.ResolveValue(m_AvailableHeight);
+                                : childStyle.GetMargin().Bottom.ResolveValue(m_AvailableWidth);
             }
 
             if (m_IsRow) {
@@ -730,12 +742,18 @@ private:
         const float containerCrossSize = m_IsRow ? m_Layout.ComputedHeight : m_Layout.ComputedWidth;
         const float width = m_Layout.ComputedWidth;
 
+        // This function is the authoritative writer of every item's cross position (it runs after,
+        // and overwrites, the `crossPos` the line loop handed to PositionLineOnMainAxis), so the
+        // border term belongs here too: paddingStart is the container's content-box origin on the
+        // cross axis, and border insets it exactly like padding does. Percentage padding resolves
+        // against `width` on all four sides -- the CSS rule -- which is already the case here.
+        const auto &border = m_Style.GetBorder();
         const float paddingStart = m_IsRow
-                                       ? m_Style.GetPadding().Top.ResolveValue(width)
-                                       : m_Style.GetPadding().Left.ResolveValue(width);
+                                       ? m_Style.GetPadding().Top.ResolveValue(width) + border.WidthTop.Value
+                                       : m_Style.GetPadding().Left.ResolveValue(width) + border.WidthLeft.Value;
         const float paddingEnd = m_IsRow
-                                     ? m_Style.GetPadding().Bottom.ResolveValue(width)
-                                     : m_Style.GetPadding().Right.ResolveValue(width);
+                                     ? m_Style.GetPadding().Bottom.ResolveValue(width) + border.WidthBottom.Value
+                                     : m_Style.GetPadding().Right.ResolveValue(width) + border.WidthRight.Value;
 
         // Gaps between lines are occupied space like the lines themselves: left out of this total,
         // align-content hands the gap's pixels out a second time as free space and the lines drift
@@ -818,14 +836,20 @@ private:
                                            ? childStyle.GetFlex().AlignSelf
                                            : m_Style.GetFlex().Align;
 
-                // Cross-axis margins resolved ONCE against line.CrossSize (read-only in this
-                // loop), reused by both the stretch sizing and the placement below — row uses
-                // Top/Bottom, column uses Left/Right. Auto resolves to 0; the auto-margin branch
-                // overrides these locals. marginStart/marginEnd stay mutable for that override.
+                // Cross-axis margins resolved ONCE (read-only in this loop), reused by both the
+                // stretch sizing and the placement below — row uses Top/Bottom, column uses
+                // Left/Right. Auto resolves to 0; the auto-margin branch overrides these locals.
+                // marginStart/marginEnd stay mutable for that override.
+                //
+                // Percentage margins always resolve against the container's WIDTH (CSS rule, all
+                // four sides) -- for a row container that's Top/Bottom, so line.CrossSize (a
+                // height-like quantity there) is the wrong reference; a column's cross edges are
+                // Left/Right, where line.CrossSize already approximates width.
                 const CSSValue &crossStartEdge = m_IsRow ? margin.Top : margin.Left;
                 const CSSValue &crossEndEdge = m_IsRow ? margin.Bottom : margin.Right;
-                float marginStart = crossStartEdge.ResolveValue(line.CrossSize);
-                float marginEnd = crossEndEdge.ResolveValue(line.CrossSize);
+                const float crossMarginRef = m_IsRow ? m_Layout.ComputedWidth : line.CrossSize;
+                float marginStart = crossStartEdge.ResolveValue(crossMarginRef);
+                float marginEnd = crossEndEdge.ResolveValue(crossMarginRef);
 
                 if (alignment == AlignItems::Stretch &&
                     (m_IsRow
@@ -866,6 +890,10 @@ private:
                         itemCrossPos = lineCrossStart + (line.CrossSize - childCrossSize) / 2.0f
                                        + (marginStart - marginEnd) / 2.0f;
                         break;
+                    // NOT IMPLEMENTED: this engine has no text/baseline metrics to align against,
+                    // so Baseline intentionally falls back to FlexStart rather than silently
+                    // landing in `default` alongside Stretch. See README.md's Alignment section.
+                    case AlignItems::Baseline:
                     default: // Stretch + fallback
                         itemCrossPos = lineCrossStart + marginStart;
                         break;
