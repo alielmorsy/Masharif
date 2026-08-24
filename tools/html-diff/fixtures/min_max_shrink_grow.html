@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>min_max_shrink_grow</title>
+<style>
+  * { box-sizing: content-box; margin: 0; padding: 0; border: 0 none; }
+  html,body { background:#f4f4f6; }
+  body { padding: 24px; font-family: system-ui, sans-serif; }
+  h1 { font: 600 14px/1.4 system-ui, sans-serif; color:#333; margin-bottom:12px !important; }
+  .stage-label { font: 12px/1.4 monospace; color:#888; margin-bottom:8px !important; }
+</style>
+</head><body>
+<h1>min/max clamping under flex-grow and flex-shrink</h1>
+<div class="stage-label"></div>
+<div data-id="root" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:400px;height:100px;min-width:0px;min-height:0px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:static;background:#fff3e0;overflow:hidden;"><div data-id="a" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:200px;height:60px;min-width:120px;min-height:0px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:static;flex-shrink:1;background:#fb8c00;overflow:hidden;color:#111;font:12px/1.3 system-ui,sans-serif;align-items:stretch;justify-content:flex-start;">minW 120</div>
+<div data-id="b" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:200px;height:60px;min-width:0px;min-height:0px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:static;flex-shrink:1;background:#f57c00;overflow:hidden;color:#111;font:12px/1.3 system-ui,sans-serif;align-items:stretch;justify-content:flex-start;">minW 0</div>
+<div data-id="c" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:40px;height:60px;min-width:0px;min-height:0px;max-width:90px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:static;flex-grow:1;background:#ef6c00;overflow:hidden;color:#111;font:12px/1.3 system-ui,sans-serif;align-items:stretch;justify-content:flex-start;">maxW 90</div></div>
+</body></html>

@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>relative_offset_dead_field</title>
+<style>
+  * { box-sizing: content-box; margin: 0; padding: 0; border: 0 none; }
+  html,body { background:#f4f4f6; }
+  body { padding: 24px; font-family: system-ui, sans-serif; }
+  h1 { font: 600 14px/1.4 system-ui, sans-serif; color:#333; margin-bottom:12px !important; }
+  .stage-label { font: 12px/1.4 monospace; color:#888; margin-bottom:8px !important; }
+</style>
+</head><body>
+<h1>KNOWN GAP: position:relative + top/left offset</h1>
+<div class="stage-label">Browser shifts the pink box by (top:20,left:15). Masharif cannot: PositionOffsets has no public setter.</div>
+<div data-id="root" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:260px;height:140px;min-width:0px;min-height:0px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:static;background:#ede7f6;overflow:hidden;"><div data-id="anchor" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:80px;height:80px;min-width:0px;min-height:0px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:static;background:#c5cae9;overflow:hidden;color:#111;font:12px/1.3 system-ui,sans-serif;align-items:stretch;justify-content:flex-start;">static sibling</div>
+<div data-id="shifted" style="display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:flex-start;align-items:stretch;align-content:stretch;box-sizing:content-box;width:80px;height:80px;min-width:0px;min-height:0px;margin-top:0px;margin-right:0px;margin-bottom:0px;margin-left:0px;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;border-top-width:0px;border-top-style:none;border-right-width:0px;border-right-style:none;border-bottom-width:0px;border-bottom-style:none;border-left-width:0px;border-left-style:none;position:relative;top:20px;left:15px;background:#ff8a80;overflow:hidden;color:#111;font:12px/1.3 system-ui,sans-serif;align-items:stretch;justify-content:flex-start;">relative</div></div>
+</body></html>

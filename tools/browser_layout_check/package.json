@@ -1,0 +1,14 @@
+{
+  "name": "browser-layout-check",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cross-checks Masharif's layout output against real browser (Chromium) rendering for the same CSS.",
+  "type": "module",
+  "scripts": {
+    "extract": "node extract.mjs",
+    "compare": "node compare.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}
