@@ -4,6 +4,7 @@
 #include "Node.h"
 
 #include <algorithm>
+#include <cmath>
 
 using namespace masharif;
 
@@ -36,6 +37,25 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
     const auto &containerBorder = containerStyle.GetBorder();
     const auto &containerPadding = containerStyle.GetPadding();
 
+    // Shrink the incoming available space to this container's own content box, mirroring
+    // FlexLayoutStrategy::ShrinkAvailableToContentBox. Without this, block/flex children resolve their
+    // AUTO width against the raw viewport instead of the container, overflowing a narrow container.
+    float availW = availableWidth;
+    float availH = availableHeight;
+    {
+        const auto &dim = containerStyle.GetDimensions();
+        const bool widthExplicit = dim.Width.Unit == CSSUnit::Px || dim.Width.Unit == CSSUnit::Percent;
+        const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
+        if (widthExplicit && !std::isnan(container.GetLayout().ComputedWidth))
+            availW = std::max(0.0f, container.GetLayout().ComputedWidth
+                                    - containerPadding.Left.Value - containerPadding.Right.Value
+                                    - containerBorder.WidthLeft.Value - containerBorder.WidthRight.Value);
+        if (heightExplicit && !std::isnan(container.GetLayout().ComputedHeight))
+            availH = std::max(0.0f, container.GetLayout().ComputedHeight
+                                    - containerPadding.Top.Value - containerPadding.Bottom.Value
+                                    - containerBorder.WidthTop.Value - containerBorder.WidthBottom.Value);
+    }
+
     for (const auto &child: container.m_Children) {
         const auto &childStyle = child->GetStyle();
 
@@ -54,7 +74,7 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         const auto &childMargin = childStyle.GetMargin();
         const auto &childPadding = childStyle.GetPadding();
 
-        child->LayoutImpl(ctx, availableWidth, availableHeight);
+        child->LayoutImpl(ctx, availW, availH);
 
         const auto display = childStyle.GetDimensions().Display;
         if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
@@ -72,7 +92,7 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         } else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {
             const float childWidth = childLayout.ComputedWidth + childMargin.Left.Value + childMargin.Right.Value;
 
-            if (currentX + childWidth > availableWidth && !line.Empty()) {
+            if (currentX + childWidth > availW && !line.Empty()) {
                 LayoutLine(line, currentY);
                 currentY += lineHeight;
                 line.Clear();

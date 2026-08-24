@@ -23,6 +23,9 @@ add_executable(unit_tests
     BenchmarkTests.cpp
     ComputedMarginTests.cpp
     OutOfFlowRepositionTests.cpp
+    NormalFlowTests.cpp
+    MinMaxHypotheticalTests.cpp
+    AbsolutePositionTests.cpp
 )
 
 target_link_libraries(unit_tests  GTest::gtest_main masharif::masharifcore)

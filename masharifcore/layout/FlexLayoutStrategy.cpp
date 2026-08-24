@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <ranges>
 
@@ -64,13 +65,19 @@ public:
         const float availableSpace = containerMainSize - padStart - padEnd;
 
         while (m_NextItem < m_Items.Count()) {
+            const std::size_t lineIndex = m_Lines.Count();
             m_Lines.Append(BuildLine(availableMainAxisSize));
-            FlexLine &line = m_Lines[m_Lines.Count() - 1];
-            ResolveFlexibleLengths(line, availableSpace);
-            PositionLineOnMainAxis(line, availableSpace, containerMainSize, padStart, padEnd, crossPos);
-            crossPos += line.CrossSize;
+            ResolveFlexibleLengths(m_Lines[lineIndex], availableSpace);
+            // Re-enters child solves, which append to the shared line arena: index, never hold a
+            // FlexLine reference across it.
+            RemeasureFlexedItems(lineIndex);
+            PositionLineOnMainAxis(m_Lines[lineIndex], availableSpace, containerMainSize, padStart, padEnd,
+                                   crossPos);
+            crossPos += m_Lines[lineIndex].CrossSize;
         }
 
+        ReShrinkWrapCrossSize();
+        ResolveAutoCrossSizeFromLines();
         AlignLinesOnCrossAxis();
         RelayoutItemsAtDefiniteSize();
     }
@@ -128,8 +135,47 @@ private:
         }
     }
 
-    /// Compute each item's flex basis. Min/max constraints are suppressed here
-    /// (ignoreMinMax) because the flex algorithm applies them in ResolveFlexibleLengths.
+    /// Clamp a candidate main-axis size to the item's own min/max on that axis. Reference is the
+    /// container's available main size, matching what ResolveFlexibleLengths resolves against.
+    [[nodiscard]] float ClampToMainMinMax(Node *child, float value) const {
+        const auto &dims = child->GetStyle().GetDimensions();
+        const float ref = m_IsRow ? m_AvailableWidth : m_AvailableHeight;
+        const CSSValue &maxEdge = m_IsRow ? dims.MaxWidth : dims.MaxHeight;
+        const CSSValue &minEdge = m_IsRow ? dims.MinWidth : dims.MinHeight;
+        if (maxEdge.Unit != CSSUnit::Auto) value = std::min(value, maxEdge.ResolveValue(ref));
+        if (minEdge.Unit != CSSUnit::Auto) value = std::max(value, minEdge.ResolveValue(ref));
+        return value;
+    }
+
+    /// Same, on the cross axis. Nothing else applies a cross min/max to a flex item: the item's own
+    /// ComputeDimensions skips the clamp for an AUTO size (there is no number to clamp yet) and the
+    /// basis measure below runs with ignoreMinMax, so without this a `min-height` on a row's child --
+    /// or a `min-width` on a column's -- is parsed, resolved and then never honoured.
+    [[nodiscard]] float ClampToCrossMinMax(Node *child, float value) const {
+        const auto &dims = child->GetStyle().GetDimensions();
+        const float ref = m_IsRow ? m_AvailableHeight : m_AvailableWidth;
+        const CSSValue &maxEdge = m_IsRow ? dims.MaxHeight : dims.MaxWidth;
+        const CSSValue &minEdge = m_IsRow ? dims.MinHeight : dims.MinWidth;
+        if (maxEdge.Unit != CSSUnit::Auto) value = std::min(value, maxEdge.ResolveValue(ref));
+        if (minEdge.Unit != CSSUnit::Auto) value = std::max(value, minEdge.ResolveValue(ref));
+        return value;
+    }
+
+    /// Compute each item's flex basis, and accumulate the container's content total from each item's
+    /// *hypothetical main size* -- the basis clamped by that item's own min/max (Flexbox 9.2 step 4).
+    ///
+    /// The two are separate on purpose. ComputedFlexBasis keeps the TRUE, unclamped flex base size,
+    /// because the freeze loop in ResolveFlexibleLengths reads it as its starting point and weights
+    /// shrinking by it -- clamping it here would hand a grow item a floor it then grows *on top of*
+    /// (a min-width:60 grow-1 item next to a plain grow-1 item resolves 80/20 instead of 60/40) and
+    /// would skew the shrink ratio between two items that differ only by a max constraint.
+    ///
+    /// m_TotalMainSize, on the other hand, must be the clamped total: ResolveContainerSize runs
+    /// immediately after this and freezes a shrink-to-fit (AUTO) main axis at it, while
+    /// ResolveFlexibleLengths later clamps the items upward and PositionLineOnMainAxis lays them out
+    /// at those clamped sizes. Summed unclamped, the container ends shorter than the children it
+    /// positions and every trailing sibling lands inside its predecessor. One pixel per row is
+    /// invisible; a column of twenty min-height rows draws its next sibling across its own last rows.
     void MeasureItemBases() {
         const std::size_t count = m_Items.Count();
         for (std::size_t i = 0; i < count; ++i) {
@@ -161,10 +207,22 @@ private:
                 childLayout.ComputedFlexBasis = childStyle.GetFlex().FlexBasis.ResolveValue(basisRef) + pb;
             }
 
+            const float hypothetical = ClampToMainMinMax(child, childLayout.ComputedFlexBasis);
+
+            // The measured cross size is the item's own AUTO result, which ignored its cross min/max
+            // twice over (see ClampToCrossMinMax). Clamp it and write it back, so the line's cross
+            // size, align-items placement and the definite relayout all see the same number.
+            const float measuredCross = m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth;
+            if (!std::isnan(measuredCross)) {
+                const float clampedCross = ClampToCrossMinMax(child, measuredCross);
+                if (m_IsRow) childLayout.ComputedHeight = clampedCross;
+                else childLayout.ComputedWidth = clampedCross;
+            }
+
             // Main-axis margins occupy main-axis space alongside the basis (BuildLine counts them
             // when packing a line), so they belong in the content total: a shrink-to-fit (AUTO) main
             // axis must enclose its children's MARGIN boxes, not just their border boxes.
-            m_TotalMainSize += childLayout.ComputedFlexBasis
+            m_TotalMainSize += hypothetical
                                + NeededMainAxisMargin(m_IsRow, childStyle.GetMargin(), basisRef);
             m_MaxCrossSize = std::max(m_MaxCrossSize,
                                       m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth);
@@ -192,8 +250,10 @@ private:
         const float pbCol = p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value;
 
         if (std::isnan(m_AvailableWidth)) {
-            if (m_Style.GetDimensions().Width.Unit == CSSUnit::Auto)
+            if (m_Style.GetDimensions().Width.Unit == CSSUnit::Auto) {
                 m_Layout.ComputedWidth = (m_IsRow ? m_TotalMainSize : m_MaxCrossSize) + pbRow;
+                if (!m_IsRow) m_CrossShrinkWrapped = true;
+            }
             m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
         } else if (m_IsRow && m_Style.GetDimensions().Width.Unit == CSSUnit::Auto
                    && !m_Container.MainSizeIsDefinite()) {
@@ -204,8 +264,10 @@ private:
         }
 
         if (std::isnan(m_AvailableHeight)) {
-            if (m_Style.GetDimensions().Height.Unit == CSSUnit::Auto)
+            if (m_Style.GetDimensions().Height.Unit == CSSUnit::Auto) {
                 m_Layout.ComputedHeight = (!m_IsRow ? m_TotalMainSize : m_MaxCrossSize) + pbCol;
+                if (m_IsRow) m_CrossShrinkWrapped = true;
+            }
             m_AvailableHeight = m_Layout.ComputedHeight - pbCol;
         } else if (!m_IsRow && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto
                    && !m_Container.MainSizeIsDefinite()) {
@@ -332,6 +394,14 @@ private:
             const auto &flex = child->GetStyle().GetFlex();
             frozen[i] = static_cast<std::uint8_t>(
                 (isGrowing && flex.FlexGrow == 0) || (isShrinking && flex.FlexShrink == 0) ? 1 : 0);
+
+            // "Size inflexible items: freeze, setting its target main size to its HYPOTHETICAL main
+            // size" (Flexbox 9.7 step 2). The distinction is the whole point for an item frozen out of
+            // the distribution: the loop below never revisits it, so its min/max would otherwise apply
+            // nowhere at all -- a min-height row sharing a line with one grow sibling would render at
+            // its content height and ignore the floor. Unfrozen items keep the unclamped base size,
+            // which is what the grow/shrink weighting is defined over.
+            if (frozen[i]) child->GetLayout().ComputedFlexBasis = ClampToMainMinMax(child, baseSizes[i]);
         }
 
         const float gapSize = m_IsRow
@@ -497,6 +567,160 @@ private:
         }
     }
 
+    /// The gap BETWEEN flex lines, which is the mirror of BuildLine's gap between items: the lines of
+    /// a row container stack vertically and are therefore separated by row-gap, while its items run
+    /// horizontally and are separated by column-gap.
+    [[nodiscard]] float LineGap() const {
+        const auto &gaps = m_Style.GetFlex().Gaps;
+        return m_IsRow
+                   ? gaps.Row.ResolveValue(m_Layout.ComputedHeight)
+                   : gaps.Column.ResolveValue(m_Layout.ComputedWidth);
+    }
+
+    /// Re-measure the items whose cross size depends on the main size they were just given.
+    ///
+    /// MeasureItemBases measures an AUTO-main item against NaN -- max-content, which for a wrapping
+    /// container means "everything on one line". ResolveFlexibleLengths then hands that item a
+    /// different main size, and a wrapping container answers a narrower main axis with MORE lines: the
+    /// cross size measured in the basis phase is a one-line answer to a question the layout no longer
+    /// asks. Nothing downstream re-asked it -- RelayoutItemsAtDefiniteSize feeds the stale cross size
+    /// back in as DEFINITE, which is also what silences ResolveAutoCrossSizeFromLines inside the item
+    /// -- so the extra lines were laid out correctly and drawn straight past the item's own bottom
+    /// edge, and past the container's with it.
+    ///
+    /// Runs between ResolveFlexibleLengths (which leaves the final main size in ComputedFlexBasis) and
+    /// PositionLineOnMainAxis (which consumes `crossPos`, so a line's cross size must be final before
+    /// the next line is placed). Line cross sizes are recomputed from scratch rather than accumulated:
+    /// growing an item's main axis removes lines exactly as shrinking it adds them.
+    void RemeasureFlexedItems(const std::size_t lineIndex) {
+        const std::size_t begin = m_Lines[lineIndex].ItemBegin;
+        const std::size_t end = m_Lines[lineIndex].ItemEnd;
+        const std::uint64_t generation = m_Container.m_generation;
+
+        bool anyRemeasured = false;
+        for (std::size_t i = begin; i < end; ++i) {
+            Node *child = m_Items[i]; // copy out: the recursive solve below may grow the arena
+            const auto &dims = child->GetStyle().GetDimensions();
+
+            // An explicit cross size is the author's number, not a measurement: nothing to re-ask.
+            if ((m_IsRow ? dims.Height : dims.Width).Unit != CSSUnit::Auto) continue;
+
+            const float mainSize = child->GetLayout().ComputedFlexBasis;
+            const float measuredMain = m_IsRow
+                                           ? child->GetLayout().ComputedWidth
+                                           : child->GetLayout().ComputedHeight;
+            if (std::isnan(mainSize) || mainSize == measuredMain) continue;
+            // A collapsed main axis would wrap every item onto its own line. CSS floors a flex item
+            // at its min-content size, which this engine does not compute, so the honest answer at
+            // zero is the basis phase's: keep it, and overflow horizontally as before.
+            if (mainSize <= 0.0f) continue;
+            if (!child->CrossSizeDependsOnMainSize(generation)) continue;
+
+            const float cross = child->MeasureCrossAtDefiniteMain(m_Ctx, m_IsRow, mainSize);
+            if (std::isnan(cross)) continue;
+
+            // Through the same clamp the basis phase applies, so the line's cross size, align-items
+            // placement and the definite relayout keep seeing one number.
+            const float clamped = ClampToCrossMinMax(child, cross);
+            if (m_IsRow) child->GetLayout().ComputedHeight = clamped;
+            else child->GetLayout().ComputedWidth = clamped;
+            anyRemeasured = true;
+        }
+
+        if (!anyRemeasured) return;
+
+        float lineCross = 0;
+        for (std::size_t i = begin; i < end; ++i) {
+            const auto &childLayout = m_Items[i]->GetLayout();
+            const float itemCross = m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth;
+            if (!std::isnan(itemCross)) lineCross = std::max(lineCross, itemCross);
+        }
+        m_Lines[lineIndex].CrossSize = lineCross;
+        m_CrossNeedsReResolve = true;
+    }
+
+    /// Re-shrink-wrap an AUTO cross axis that RemeasureFlexedItems has just invalidated.
+    ///
+    /// ResolveContainerSize shrink-wraps the cross axis to m_MaxCrossSize before a single line exists,
+    /// and therefore before any item's main size is final -- so a wrapping child that measured one
+    /// line tall there and two lines tall after the distribution left the container frozen one line
+    /// short. A multi-line container gets the same correction from ResolveAutoCrossSizeFromLines,
+    /// which runs next and overrides this; a single line has no other owner.
+    ///
+    /// The max is recomputed over every item rather than folded in, because a re-measure moves an
+    /// item's cross size in both directions and a running maximum cannot come back down.
+    void ReShrinkWrapCrossSize() {
+        if (!m_CrossNeedsReResolve || !m_CrossShrinkWrapped) return;
+
+        float maxCross = 0;
+        const std::size_t count = m_Items.Count();
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto &childLayout = m_Items[i]->GetLayout();
+            const float itemCross = m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth;
+            if (!std::isnan(itemCross)) maxCross = std::max(maxCross, itemCross);
+        }
+        m_MaxCrossSize = maxCross;
+
+        const auto &p = m_Style.GetPadding();
+        const auto &b = m_Style.GetBorder();
+        if (m_IsRow) {
+            const float pb = p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value;
+            m_Layout.ComputedHeight = m_MaxCrossSize + pb;
+            m_AvailableHeight = m_MaxCrossSize;
+        } else {
+            const float pb = p.Left.Value + p.Right.Value + b.WidthLeft.Value + b.WidthRight.Value;
+            m_Layout.ComputedWidth = m_MaxCrossSize + pb;
+            m_AvailableWidth = m_MaxCrossSize;
+        }
+    }
+
+    /// Flexbox 9.4 step 15: a container whose cross size is AUTO takes the SUM of its flex lines'
+    /// cross sizes, not the largest of them.
+    ///
+    /// MeasureItemBases accumulates `m_MaxCrossSize` as a running max and ResolveContainerSize
+    /// shrink-wraps the AUTO cross axis to it. That is exactly right for one line -- which, as the
+    /// comment in MeasureItemBases says, used to be the only shape this engine emitted -- and it is
+    /// exactly one line too short for anything that wraps. Nothing detected the shortfall, because a
+    /// flex line is positioned from its own running offset: the extra lines were laid out correctly
+    /// and simply drawn past the bottom of a container that had never been told it needed the room.
+    ///
+    /// Runs after the line loop because that is the first moment the line count exists, and before
+    /// AlignLinesOnCrossAxis because align-content divides the container's cross size against it.
+    void ResolveAutoCrossSizeFromLines() {
+        const std::size_t lineCount = m_Lines.Count();
+
+        // One line is already what the shrink-wrap measured; a definite cross size is the author's
+        // and overflow is then the correct outcome.
+        if (lineCount < 2) return;
+
+        const CSSValue &crossDim = m_IsRow ? m_Style.GetDimensions().Height
+                                           : m_Style.GetDimensions().Width;
+        if (crossDim.Unit != CSSUnit::Auto || m_Container.CrossSizeIsDefinite()) return;
+
+        float total = 0;
+        for (std::size_t li = 0; li < lineCount; ++li) total += m_Lines[li].CrossSize;
+        total += static_cast<float>(lineCount - 1) * LineGap();
+
+        const auto &p = m_Style.GetPadding();
+        const auto &b = m_Style.GetBorder();
+        const float pb = m_IsRow
+                             ? p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value
+                             : p.Left.Value + p.Right.Value + b.WidthLeft.Value + b.WidthRight.Value;
+
+        // Through the same clamp every other cross size goes through, so min-height still floors the
+        // result and max-height still caps it -- a capped container overflows, which is what a stated
+        // maximum means.
+        const float resolved = ClampToCrossMinMax(&m_Container, total + pb);
+
+        if (m_IsRow) {
+            m_Layout.ComputedHeight = resolved;
+            m_AvailableHeight = resolved - pb;
+        } else {
+            m_Layout.ComputedWidth = resolved;
+            m_AvailableWidth = resolved - pb;
+        }
+    }
+
     /// align-content across lines + per-item cross sizing (stretch), auto cross margins
     /// and align-items/align-self placement.
     void AlignLinesOnCrossAxis() {
@@ -513,11 +737,18 @@ private:
                                      ? m_Style.GetPadding().Bottom.ResolveValue(width)
                                      : m_Style.GetPadding().Right.ResolveValue(width);
 
+        // Gaps between lines are occupied space like the lines themselves: left out of this total,
+        // align-content hands the gap's pixels out a second time as free space and the lines drift
+        // apart by exactly the gap.
+        const float lineGap = lineCount > 1 ? LineGap() : 0.0f;
+        const float totalLineGap = static_cast<float>(lineCount - 1) * lineGap;
+
         float totalLineCrossSize = 0;
         for (std::size_t li = 0; li < lineCount; ++li)
             totalLineCrossSize += m_Lines[li].CrossSize;
 
-        float extraSpace = std::max(0.0f, containerCrossSize - paddingStart - paddingEnd - totalLineCrossSize);
+        float extraSpace = std::max(
+            0.0f, containerCrossSize - paddingStart - paddingEnd - totalLineCrossSize - totalLineGap);
         float crossOffset = paddingStart;
         float lineSpacing = 0;
         const bool isWrapReverse = m_Style.GetFlex().Wrap == FlexWrap::WrapReverse;
@@ -645,6 +876,7 @@ private:
             }
 
             crossOffset += line.CrossSize + lineSpacing;
+            if (li + 1 < lineCount) crossOffset += lineGap;
         }
     }
 
@@ -674,6 +906,11 @@ private:
     float m_AvailableHeight;
     float m_TotalMainSize = 0;
     float m_MaxCrossSize = 0;
+    /// ResolveContainerSize shrink-wrapped the cross axis to m_MaxCrossSize (AUTO cross dimension,
+    /// NaN available cross), so that number is this solve's to correct.
+    bool m_CrossShrinkWrapped = false;
+    /// RemeasureFlexedItems moved at least one item's cross size after that shrink-wrap.
+    bool m_CrossNeedsReResolve = false;
     ArenaSlice<Node *> m_Items;
     ArenaSlice<FlexLine> m_Lines;
     std::size_t m_NextItem = 0;

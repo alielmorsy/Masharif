@@ -866,3 +866,120 @@ TEST(FlexTests, percent_cross_margin_offsets_item) {
     ASSERT_FLOAT_EQ(50.0f, child->GetLayout().ComputedWidth);
     ASSERT_FLOAT_EQ(30.0f, child->GetLayout().ComputedHeight);
 }
+
+namespace {
+    /// The editor's tag strip, reduced: a non-wrapping row (coloured edge + label + chip area) whose
+    /// only wrapping part is the chip area, which takes its width from flex-grow. The chips are the
+    /// reason the row's height is not knowable until after the flex distribution.
+    struct TagStrip {
+        SharedNode band;
+        SharedNode label;
+        SharedNode chips;
+        std::vector<SharedNode> chip;
+    };
+
+    TagStrip MakeTagStrip(const int chipCount, const float chipWidth = 60.0f,
+                          const float chipHeight = 17.0f) {
+        TagStrip strip;
+
+        strip.band = std::make_shared<Node>();
+        strip.band->SetDisplay(OuterDisplay::Flex); // Row, height AUTO
+        strip.band->GetStyle().Modify<CSSFlex>().Align = AlignItems::FlexStart;
+        // `width: 100%`, as the stylesheet declares it. An AUTO width would shrink-wrap the band to
+        // its content in the basis phase -- a column stretches its items on the cross axis only
+        // afterwards -- and the chip area would be measured at a width it never has.
+        strip.band->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f, CSSUnit::Percent);
+
+        strip.label = std::make_shared<Node>();
+        strip.label->GetStyle().Modify<Dimensions>().Width = 34.0f;
+        strip.label->GetStyle().Modify<Dimensions>().Height = 10.0f;
+        strip.band->AddChild(strip.label);
+
+        strip.chips = std::make_shared<Node>();
+        strip.chips->SetDisplay(OuterDisplay::Flex);
+        strip.chips->GetStyle().Modify<CSSFlex>().Wrap = FlexWrap::Wrap;
+        strip.chips->GetStyle().Modify<CSSFlex>().Align = AlignItems::FlexStart;
+        // flex: 1 1 0 — what the editor's stylesheet resolves `flex-grow: 1` to, and the reason the
+        // chip area's basis measure says nothing about the width it ends up with.
+        strip.chips->GetStyle().Modify<CSSFlex>().FlexGrow = 1.0f;
+        strip.chips->GetStyle().Modify<CSSFlex>().FlexBasis = 0.0f;
+        strip.band->AddChild(strip.chips);
+
+        for (int i = 0; i < chipCount; ++i) {
+            auto chip = std::make_shared<Node>();
+            chip->GetStyle().Modify<Dimensions>().Width = chipWidth;
+            chip->GetStyle().Modify<Dimensions>().Height = chipHeight;
+            strip.chips->AddChild(chip);
+            strip.chip.push_back(chip);
+        }
+        return strip;
+    }
+}
+
+// A wrapping flex item is measured for its basis against NaN — max-content, one line — and only
+// then given its real main size by grow/shrink. At that width it needs two lines, so both it and
+// the AUTO-height row around it are taller than the basis phase said: without the re-measure the
+// second row of chips is laid out correctly and drawn past the bottom of both boxes.
+TEST(FlexTests, wrap_item_regrows_row_after_flex_distribution) {
+    TagStrip strip = MakeTagStrip(4); // 4x60 chips in 166px => 2 per line, 2 lines
+
+    strip.band->Calculate(200.0f, NAN);
+
+    ASSERT_FLOAT_EQ(166.0f, strip.chips->GetLayout().ComputedWidth);
+    ASSERT_FLOAT_EQ(34.0f, strip.chips->GetLayout().ComputedHeight); // two 17px lines
+    ASSERT_FLOAT_EQ(34.0f, strip.band->GetLayout().ComputedHeight);  // the row grew with it
+
+    ASSERT_FLOAT_EQ(34.0f, strip.chip[0]->GetLayout().ComputedX);
+    ASSERT_FLOAT_EQ(0.0f, strip.chip[0]->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(34.0f, strip.chip[2]->GetLayout().ComputedX); // second line, back at the start
+    ASSERT_FLOAT_EQ(17.0f, strip.chip[2]->GetLayout().ComputedY);
+}
+
+// The same defect as its parent sees it: the row's understated height is the position of every
+// following sibling, so the next panel section was drawn on top of the wrapped chips.
+TEST(FlexTests, wrap_item_pushes_following_sibling_down) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Column;
+    root->GetStyle().Modify<Dimensions>().Width = 200.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 400.0f;
+
+    TagStrip strip = MakeTagStrip(4);
+    root->AddChild(strip.band);
+
+    auto next = std::make_shared<Node>();
+    next->GetStyle().Modify<Dimensions>().Height = 20.0f;
+    root->AddChild(next);
+
+    root->Calculate(200.0f, 400.0f);
+
+    ASSERT_FLOAT_EQ(34.0f, strip.band->GetLayout().ComputedHeight);
+    ASSERT_FLOAT_EQ(0.0f, strip.band->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(34.0f, next->GetLayout().ComputedY); // not 17: the chips' second line is inside
+}
+
+// The re-measure is a measurement, not an override: an explicit cross size on the wrapping item is
+// the author's number and the extra lines overflow it, exactly as CSS says they do.
+TEST(FlexTests, explicit_height_on_wrap_item_survives_remeasure) {
+    TagStrip strip = MakeTagStrip(4);
+    strip.chips->GetStyle().Modify<Dimensions>().Height = 17.0f;
+
+    strip.band->Calculate(200.0f, NAN);
+
+    ASSERT_FLOAT_EQ(17.0f, strip.chips->GetLayout().ComputedHeight);
+    ASSERT_FLOAT_EQ(17.0f, strip.band->GetLayout().ComputedHeight);
+}
+
+// The per-frame memo behind the re-measure is keyed on the frame generation AND the main size it
+// answered: a second solve at a width that fits every chip on one line must not replay the
+// two-line answer.
+TEST(FlexTests, remeasured_cross_size_follows_a_width_change) {
+    TagStrip strip = MakeTagStrip(4);
+
+    strip.band->Calculate(200.0f, NAN);
+    ASSERT_FLOAT_EQ(34.0f, strip.band->GetLayout().ComputedHeight);
+
+    strip.band->Calculate(400.0f, NAN); // 366px of chip area: all four fit on one line
+    ASSERT_FLOAT_EQ(17.0f, strip.chips->GetLayout().ComputedHeight);
+    ASSERT_FLOAT_EQ(17.0f, strip.band->GetLayout().ComputedHeight);
+}

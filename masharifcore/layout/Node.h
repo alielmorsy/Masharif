@@ -97,6 +97,32 @@ namespace masharif
         /// flex-basis phase measures AUTO items against NaN and collapses them to 0.
         void LayoutContentsWithDefiniteSize(LayoutContext& ctx, float borderBoxWidth, float borderBoxHeight);
 
+        /// Re-solve this subtree with `mainBorderBox` fixed on the main axis and the cross axis left
+        /// AUTO, and report the cross-axis border box the subtree needs at that main size.
+        ///
+        /// The flex-basis phase measures an AUTO-main item against NaN, i.e. at max-content, which
+        /// for a wrapping container means "everything on one line". Grow/shrink then hands that item
+        /// a different main size, and a wrapping container answers a narrower main axis with MORE
+        /// lines: its cross size is a function of its main size, and the basis-phase number is an
+        /// answer to a question the layout no longer asks. This is how the flex solver asks again.
+        /// See FlexLayoutStrategy::Solver::RemeasureFlexedItems.
+        ///
+        /// Returns NaN when the question does not apply (display:none, NaN main size, or a normal-flow
+        /// box asked for its width -- a block's width never follows its height).
+        [[nodiscard]] float MeasureCrossAtDefiniteMain(LayoutContext& ctx, bool mainIsHorizontal,
+                                                      float mainBorderBox);
+
+        /// Whether this subtree's cross size is a function of its main size -- i.e. whether anything
+        /// in it wraps. Nothing else in this engine couples the two axes: there is no measure hook,
+        /// so text arrives pre-sized and every other box's content size is main-axis independent.
+        /// Memoised per frame generation, the answer being a property of the tree's shape that no
+        /// solve pass changes.
+        [[nodiscard]] bool CrossSizeDependsOnMainSize(std::uint64_t generation);
+
+        /// Block/InlineBlock AUTO height: the bottom edge of the lowest in-flow child plus this box's
+        /// own padding and border. Flex resolves its own height, so this is normal flow only.
+        void ApplyBlockAutoHeight();
+
         void StartUpdatingPositions(LayoutContext& ctx);
 
         void PositionOutOfFlowChildren(LayoutContext& ctx);
@@ -165,6 +191,8 @@ namespace masharif
         {
             m_generation = 0;
             m_defGeneration = 0;
+            m_wrapScanGeneration = 0;
+            m_crossMeasureGeneration = 0;
             m_measureCache = {};
             m_measureCacheNext = 0;
         }
@@ -211,6 +239,16 @@ namespace masharif
 
         /// Generation of the last definite-size strategy run (pairs with m_LastDefW/H).
         std::uint64_t m_defGeneration = 0;
+
+        /// Memo for CrossSizeDependsOnMainSize: the generation the subtree scan ran under, and its
+        /// answer. One scan per node per frame, so a container asking about every item is linear.
+        std::uint64_t m_wrapScanGeneration = 0;
+        bool m_wrapInSubtree = false;
+
+        /// Memo for MeasureCrossAtDefiniteMain: one (generation, main size) -> cross size entry. Both
+        /// flex passes of a frame ask at the same main size, and the second one is pure replay.
+        std::uint64_t m_crossMeasureGeneration = 0;
+        float m_crossMeasureMain = NAN, m_crossMeasureCross = NAN;
 
         std::array<MeasureCacheEntry, MeasureCacheSize> m_measureCache{};
         std::uint8_t m_measureCacheNext = 0;

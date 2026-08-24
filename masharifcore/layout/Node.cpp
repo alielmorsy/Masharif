@@ -316,27 +316,7 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
     const bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
 
     if (isBlock && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto)
-    {
-        float maxChildBottom = 0.0f;
-        for (const auto& child : m_Children)
-        {
-            auto& childLayout = child->m_Layout;
-            auto& childStyle = child->m_Style;
-            const auto position = childStyle.GetDimensions().Position;
-            auto& childMargin = childStyle.GetMargin();
-            if (position == PositionType::Static || position == PositionType::Relative)
-            {
-                maxChildBottom = std::max(maxChildBottom,
-                                          childLayout.LocalY + childLayout.ComputedHeight + childMargin.Bottom +
-                                          childMargin.Top);
-            }
-        }
-
-        auto& border = m_Style.GetBorder();
-        m_Layout.ComputedHeight = maxChildBottom + m_Style.GetPadding().Top + m_Style.GetPadding().Bottom
-            +
-            border.WidthTop + border.WidthBottom;
-    }
+        ApplyBlockAutoHeight();
 
     // Remember this run's content-box size for the reuse early-out (the parent may mutate
     // ComputedWidth/Height via flex grow/shrink before then), and make it replayable for
@@ -399,6 +379,138 @@ void Node::LayoutContentsWithDefiniteSize(LayoutContext& ctx, float borderBoxWid
     // Re-assert the definite border box (the strategy may rewrite it; guard rounding drift).
     m_Layout.ComputedWidth = borderBoxWidth;
     m_Layout.ComputedHeight = borderBoxHeight;
+}
+
+void Node::ApplyBlockAutoHeight()
+{
+    float maxChildBottom = 0.0f;
+    for (const auto& child : m_Children)
+    {
+        auto& childLayout = child->m_Layout;
+        auto& childStyle = child->m_Style;
+        const auto position = childStyle.GetDimensions().Position;
+        auto& childMargin = childStyle.GetMargin();
+        if (position == PositionType::Static || position == PositionType::Relative)
+        {
+            maxChildBottom = std::max(maxChildBottom,
+                                      childLayout.LocalY + childLayout.ComputedHeight + childMargin.Bottom +
+                                      childMargin.Top);
+        }
+    }
+
+    auto& border = m_Style.GetBorder();
+    m_Layout.ComputedHeight = maxChildBottom + m_Style.GetPadding().Top + m_Style.GetPadding().Bottom
+        +
+        border.WidthTop + border.WidthBottom;
+}
+
+bool Node::CrossSizeDependsOnMainSize(const std::uint64_t generation)
+{
+    if (generation != 0 && m_wrapScanGeneration == generation) return m_wrapInSubtree;
+    m_wrapScanGeneration = generation;
+    m_wrapInSubtree = false;
+
+    const auto& dimensions = m_Style.GetDimensions();
+    if (dimensions.Display == OuterDisplay::None) return false;
+    // A leaf has nothing to reflow: `flex-wrap` on a childless box is a declaration about lines
+    // that will never exist.
+    if (m_Children.empty()) return false;
+
+    const bool normalFlow = dimensions.Display == OuterDisplay::Block ||
+        dimensions.Display == OuterDisplay::InlineBlock;
+    if (!normalFlow && m_Style.GetFlex().Wrap != FlexWrap::NoWrap)
+    {
+        m_wrapInSubtree = true;
+        return true;
+    }
+
+    for (const auto& child : m_Children)
+    {
+        // An out-of-flow child is sized against its containing block, not against this subtree's
+        // main axis, and contributes nothing to this box's content size either way.
+        const auto position = child->GetStyle().GetDimensions().Position;
+        if (position != PositionType::Static && position != PositionType::Relative) continue;
+        if (child->CrossSizeDependsOnMainSize(generation))
+        {
+            m_wrapInSubtree = true;
+            break;
+        }
+    }
+    return m_wrapInSubtree;
+}
+
+float Node::MeasureCrossAtDefiniteMain(LayoutContext& ctx, const bool mainIsHorizontal,
+                                       const float mainBorderBox)
+{
+    PullGeneration();
+
+    if (m_Style.GetDimensions().Display == OuterDisplay::None) return NAN;
+    if (std::isnan(mainBorderBox)) return NAN;
+
+    const auto display = m_Style.GetDimensions().Display;
+    const bool isBlock = display == OuterDisplay::Block || display == OuterDisplay::InlineBlock;
+    // A normal-flow box's width is handed to it, never derived from its height, so a column's block
+    // item has nothing to re-measure. Only the block-in-a-row direction (height from content) does.
+    if (isBlock && !mainIsHorizontal) return NAN;
+
+    // Both flex passes of a frame ask at the same main size, and the answer is a pure function of it:
+    // replay the second. Deliberately NOT the m_measureCache -- that keys on available space alone,
+    // and a run with the main axis pinned resolves differently from a same-space run that
+    // shrink-wraps it.
+    if (m_generation != 0 && m_crossMeasureGeneration == m_generation
+        && SameSize(mainBorderBox, m_crossMeasureMain))
+        return m_crossMeasureCross;
+
+    auto& padding = m_Style.GetPadding();
+    auto& border = m_Style.GetBorder();
+    const float horizontal = padding.Left + padding.Right + border.WidthLeft + border.WidthRight;
+    const float vertical = padding.Top + padding.Bottom + border.WidthTop + border.WidthBottom;
+    const float contentMain = std::max(0.0f, mainBorderBox - (mainIsHorizontal ? horizontal : vertical));
+
+    // The main axis is handed in; the cross axis is the question, and NaN available space is what
+    // makes the strategy shrink-wrap it -- the same input the basis pass uses.
+    if (mainIsHorizontal)
+    {
+        m_Layout.ComputedWidth = mainBorderBox;
+        m_Layout.ComputedHeight = NAN;
+    }
+    else
+    {
+        m_Layout.ComputedHeight = mainBorderBox;
+        m_Layout.ComputedWidth = NAN;
+    }
+
+    // MainSizeIsDefinite, and ONLY that: the strategy must not shrink-wrap the main axis back to
+    // content, and must stay free to resolve the cross axis from the lines it builds --
+    // CrossSizeIsDefinite would clamp it to the very number this call exists to replace.
+    m_mainSizeDefinite = true;
+    LayoutStrategy::For(display).Layout(*this, ctx,
+                                        mainIsHorizontal ? contentMain : NAN,
+                                        mainIsHorizontal ? NAN : contentMain);
+    m_mainSizeDefinite = false;
+    ++m_Layout.StrategyRuns;
+
+    // Driving the strategy directly skips LayoutImpl's normal-flow height override, which is where a
+    // block's AUTO height actually comes from.
+    if (isBlock && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto)
+        ApplyBlockAutoHeight();
+
+    // The descendants now reflect this run rather than the last definite distribution, so the
+    // definite pass that follows must re-run even when its size memo matches.
+    m_strategyRanSinceDefinite = true;
+    m_positionsDirty = true;
+
+    // Re-assert the main axis the caller fixed (the strategy may rewrite it) and report the cross
+    // axis it just resolved. m_implW/m_implH are deliberately left alone: they hold the max-content
+    // basis measure, which is what flex-basis derivation must keep seeing next frame.
+    const float cross = mainIsHorizontal ? m_Layout.ComputedHeight : m_Layout.ComputedWidth;
+    if (mainIsHorizontal) m_Layout.ComputedWidth = mainBorderBox;
+    else m_Layout.ComputedHeight = mainBorderBox;
+
+    m_crossMeasureGeneration = m_generation;
+    m_crossMeasureMain = mainBorderBox;
+    m_crossMeasureCross = cross;
+    return cross;
 }
 
 void Node::ComputeDimensions(LayoutContext& ctx, float availableWidth, float availableHeight, bool ignoreMinMax)
