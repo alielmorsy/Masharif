@@ -23,18 +23,14 @@ const KNOWN_GAPS = new Map([
     ['gap_block_auto_height_padding.wrapper',
         'Node.cpp:447-451 -- ApplyBlockAutoHeight adds padding-top on top of a child LocalY that already includes it, so the derived height counts it twice.'],
 
-    // align-items/align-self:baseline is a deliberate non-implementation: the engine has no text
-    // or baseline metrics, so it falls back to FlexStart (FlexLayoutStrategy.cpp:893-899). CSS
-    // synthesises a textless box's baseline from its bottom margin edge, i.e. bottom-aligns it,
-    // so the browser can only ever disagree. Only nodes whose ONLY difference is this are listed
-    // -- page_marketing_landing's hero_stats items are left as mismatches because they also carry
-    // the justify-content gap error, and declaring them would hide it.
+    // align-items/align-self:baseline aligns SYNTHESISED baselines: with no text and no baseline
+    // callback, every box's baseline sits at its bottom margin edge, which is the same rule the
+    // browser applies to the same textless markup, so the two agree everywhere in the generated
+    // pages. This fixture is the one place they cannot: its boxes contain text, and a real text
+    // baseline is a font metric the engine has no way to obtain.
     ['align_items_baseline.c1',
-        'FlexLayoutStrategy.cpp:893-899 -- Baseline falls back to FlexStart; CSS bottom-aligns a textless box.'],
-    ['page_flex_kitchen_sink.ai4_a',
-        'FlexLayoutStrategy.cpp:893-899 -- Baseline falls back to FlexStart; CSS bottom-aligns a textless box.'],
-    ['page_flex_kitchen_sink.ai4_c',
-        'FlexLayoutStrategy.cpp:893-899 -- Baseline falls back to FlexStart; CSS bottom-aligns a textless box.'],
+        'The only fixture with text in it: the browser aligns real text baselines (offset by each ' +
+        'box\'s padding-top), the engine synthesises both from the bottom margin edge.'],
 ]);
 
 const masharif = JSON.parse(readFileSync('masharif_results.json', 'utf8'));

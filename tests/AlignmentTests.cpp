@@ -263,3 +263,118 @@ TEST(AlignmentTests, normal_flow_flex_column_fills_width_and_shrink_wraps_height
     ASSERT_FLOAT_EQ(200.0f, column->GetLayout().ComputedWidth);
     ASSERT_FLOAT_EQ(10.0f, column->GetLayout().ComputedHeight);
 }
+
+// ---------------------------------------------------------------- align-items: baseline
+//
+// This engine has no text and no baseline callback, so every box falls into the CSS rule for a
+// box with no baseline of its own: the baseline is SYNTHESISED from the bottom margin edge. That
+// makes baseline alignment fully determinate here rather than unimplementable -- a row of boxes
+// of different heights lines its bottoms up, which is exactly what a browser does with the same
+// (textless) markup. See FlexLayoutStrategy::Solver::AlignLinesOnCrossAxis.
+
+TEST(AlignmentTests, align_items_baseline_synthesises_from_the_bottom_edge) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+    root->GetStyle().Modify<CSSFlex>().Align = AlignItems::Baseline;
+    root->GetStyle().Modify<Dimensions>().Width = 300.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 100.0f;
+
+    const float heights[] = {40.0f, 28.0f, 34.0f};
+    std::vector<SharedNode> kids;
+    for (const float h: heights) {
+        auto child = std::make_shared<Node>();
+        child->GetStyle().Modify<Dimensions>().Width = 80.0f;
+        child->GetStyle().Modify<Dimensions>().Height = h;
+        root->AddChild(child);
+        kids.push_back(child);
+    }
+
+    root->Calculate(300, 100);
+
+    // Tallest item owns the line's baseline; the others drop by the difference so all three
+    // bottoms land on 40.
+    ASSERT_FLOAT_EQ(0.0f, kids[0]->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(12.0f, kids[1]->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(6.0f, kids[2]->GetLayout().ComputedY);
+}
+
+TEST(AlignmentTests, align_items_baseline_counts_the_leading_cross_margin) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+    root->GetStyle().Modify<CSSFlex>().Align = AlignItems::Baseline;
+    root->GetStyle().Modify<Dimensions>().Width = 300.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 100.0f;
+
+    // Ascent is margin-top + baseline, so this one's ascent (10 + 30) ties the plain 40 below and
+    // its margin box still starts at the line's top edge.
+    auto margined = std::make_shared<Node>();
+    margined->GetStyle().Modify<Dimensions>().Width = 80.0f;
+    margined->GetStyle().Modify<Dimensions>().Height = 30.0f;
+    margined->GetStyle().Modify<MarginEdge>().Top = 10.0f;
+    root->AddChild(margined);
+
+    auto plain = std::make_shared<Node>();
+    plain->GetStyle().Modify<Dimensions>().Width = 80.0f;
+    plain->GetStyle().Modify<Dimensions>().Height = 40.0f;
+    root->AddChild(plain);
+
+    root->Calculate(300, 100);
+
+    ASSERT_FLOAT_EQ(10.0f, margined->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(0.0f, plain->GetLayout().ComputedY);
+}
+
+TEST(AlignmentTests, align_items_baseline_takes_a_container_item_from_its_first_child) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+    root->GetStyle().Modify<CSSFlex>().Align = AlignItems::Baseline;
+    root->GetStyle().Modify<Dimensions>().Width = 300.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 100.0f;
+
+    // 60 tall, but its baseline comes from the first flex item inside it -- 20, not 60.
+    auto nested = std::make_shared<Node>();
+    nested->SetDisplay(OuterDisplay::Flex);
+    nested->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Column;
+    nested->GetStyle().Modify<Dimensions>().Width = 80.0f;
+    nested->GetStyle().Modify<Dimensions>().Height = 60.0f;
+    root->AddChild(nested);
+
+    auto inner = std::make_shared<Node>();
+    inner->GetStyle().Modify<Dimensions>().Width = 80.0f;
+    inner->GetStyle().Modify<Dimensions>().Height = 20.0f;
+    nested->AddChild(inner);
+
+    auto plain = std::make_shared<Node>();
+    plain->GetStyle().Modify<Dimensions>().Width = 80.0f;
+    plain->GetStyle().Modify<Dimensions>().Height = 30.0f;
+    root->AddChild(plain);
+
+    root->Calculate(300, 100);
+
+    // Line ascent is max(20, 30) = 30, so the nested container drops by 10 and the plain box stays.
+    ASSERT_FLOAT_EQ(10.0f, nested->GetLayout().ComputedY);
+    ASSERT_FLOAT_EQ(0.0f, plain->GetLayout().ComputedY);
+}
+
+TEST(AlignmentTests, align_items_baseline_in_a_column_container_falls_back_to_flex_start) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Column;
+    root->GetStyle().Modify<CSSFlex>().Align = AlignItems::Baseline;
+    root->GetStyle().Modify<Dimensions>().Width = 100.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 100.0f;
+
+    auto child = std::make_shared<Node>();
+    child->GetStyle().Modify<Dimensions>().Width = 30.0f;
+    child->GetStyle().Modify<Dimensions>().Height = 10.0f;
+    root->AddChild(child);
+
+    root->Calculate(100, 100);
+
+    // A column container's cross axis is the inline axis, where a baseline needs text metrics
+    // this engine does not have. Flex-start is the documented fallback there.
+    ASSERT_FLOAT_EQ(0.0f, child->GetLayout().ComputedX);
+}

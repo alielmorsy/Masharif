@@ -23,6 +23,42 @@ namespace {
             return margin.Left.ResolveValue(widthRef) + margin.Right.ResolveValue(widthRef);
         return margin.Top.ResolveValue(widthRef) + margin.Bottom.ResolveValue(widthRef);
     }
+
+    /// Distance from a box's border-box top to the baseline `align-items: baseline` aligns it on.
+    ///
+    /// This engine has no text and no baseline callback, so no box ever has a baseline of its own
+    /// and every one of them lands in the CSS rule for that case: the baseline is SYNTHESISED from
+    /// the bottom margin edge, i.e. it sits at the box's own height. That makes baseline alignment
+    /// fully determinate here -- a row of textless boxes lines its bottoms up, which is exactly
+    /// what a browser does with the same markup -- rather than the unanswerable question it would
+    /// be if text were in play.
+    ///
+    /// A box that HAS content takes its baseline from content instead (CSS Flexbox 8.5: a flex
+    /// container's baseline is its first flex item's), so the walk descends to the first in-flow
+    /// child and adds where that child sits inside its parent. A child that asks for baseline
+    /// alignment itself wins over mere document order, matching how a browser picks the item whose
+    /// baseline the line was built around.
+    float SynthesizedBaseline(Node *node) {
+        Node *baselineChild = nullptr;
+        const bool parentAlignsOnBaseline = node->GetStyle().GetFlex().Align == AlignItems::Baseline;
+
+        for (const auto &child: node->Children()) {
+            const auto &dim = child->GetStyle().GetDimensions();
+            if (dim.Display == OuterDisplay::None) continue;
+            // Out-of-flow boxes contribute no baseline: they are not on the line at all.
+            if (dim.Position != PositionType::Static && dim.Position != PositionType::Relative) continue;
+
+            const AlignItems self = child->GetStyle().GetFlex().AlignSelf;
+            if (self == AlignItems::Baseline || (self == AlignItems::AutoAlign && parentAlignsOnBaseline)) {
+                baselineChild = child.get();
+                break;
+            }
+            if (baselineChild == nullptr) baselineChild = child.get();
+        }
+
+        if (baselineChild == nullptr) return node->GetLayout().ComputedHeight;
+        return SynthesizedBaseline(baselineChild) + baselineChild->GetLayout().LocalY;
+    }
 }
 
 /// One flex solve for one container. Phases run in CSS order; the recursive phases
@@ -776,6 +812,13 @@ private:
         }
     }
 
+    /// The cross-axis alignment actually in force for one item: `align-self` wins over the
+    /// container's `align-items`, and AutoAlign is what "not stated on the item" looks like.
+    [[nodiscard]] AlignItems ResolvedAlignment(Node *child) const {
+        const AlignItems self = child->GetStyle().GetFlex().AlignSelf;
+        return self != AlignItems::AutoAlign ? self : m_Style.GetFlex().Align;
+    }
+
     /// align-content across lines + per-item cross sizing (stretch), auto cross margins
     /// and align-items/align-self placement.
     void AlignLinesOnCrossAxis() {
@@ -867,6 +910,27 @@ private:
                                              ? (containerCrossSize - crossOffset - line.CrossSize)
                                              : crossOffset;
 
+            // Baseline alignment is a per-LINE quantity -- each item drops by the difference
+            // between the line's largest ascent and its own -- so every ascent on the line has to
+            // be known before the first item is placed. Ascent is the leading cross margin plus
+            // the box's own baseline, which is what makes a margin-pushed item still line its
+            // baseline up with an unmargined sibling instead of hanging below it.
+            //
+            // Row containers only: a column container's cross axis is the inline axis, where a
+            // baseline is a text metric this engine does not have, so FlexStart stays the
+            // documented fallback there.
+            float maxBaselineAscent = 0;
+            if (m_IsRow) {
+                for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
+                    Node *child = m_Items[i];
+                    if (ResolvedAlignment(child) != AlignItems::Baseline) continue;
+                    const float leadingMargin =
+                            child->GetStyle().GetMargin().Top.ResolveValue(m_Layout.ComputedWidth);
+                    maxBaselineAscent =
+                            std::max(maxBaselineAscent, leadingMargin + SynthesizedBaseline(child));
+                }
+            }
+
             for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
                 Node *child = m_Items[i];
                 const auto &childStyle = child->GetStyle();
@@ -875,9 +939,7 @@ private:
                 auto &childLayout = child->GetLayout();
                 float childCrossSize = m_IsRow ? childLayout.ComputedHeight : childLayout.ComputedWidth;
 
-                AlignItems alignment = childStyle.GetFlex().AlignSelf != AlignItems::AutoAlign
-                                           ? childStyle.GetFlex().AlignSelf
-                                           : m_Style.GetFlex().Align;
+                AlignItems alignment = ResolvedAlignment(child);
 
                 // Cross-axis margins resolved ONCE (read-only in this loop), reused by both the
                 // stretch sizing and the placement below — row uses Top/Bottom, column uses
@@ -940,11 +1002,20 @@ private:
                         itemCrossPos = lineCrossStart + (line.CrossSize - childCrossSize) / 2.0f
                                        + (marginStart - marginEnd) / 2.0f;
                         break;
-                    // NOT IMPLEMENTED: this engine has no text/baseline metrics to align against,
-                    // so Baseline intentionally falls back to FlexStart rather than silently
-                    // landing in `default` alongside Stretch. See README.md's Alignment section.
+                    // Place the item so its own baseline lands on the line's. There is no text to
+                    // measure, but there is no text ANYWHERE in this engine, which is what makes
+                    // this answerable rather than unimplementable: with no baseline of its own,
+                    // CSS synthesises a box's baseline at its bottom margin edge, and
+                    // SynthesizedBaseline computes exactly that. A column container has no such
+                    // answer and falls through to FlexStart below.
                     case AlignItems::Baseline:
-                    default: // Stretch + fallback
+                        if (m_IsRow) {
+                            itemCrossPos =
+                                    lineCrossStart + maxBaselineAscent - SynthesizedBaseline(child);
+                            break;
+                        }
+                        [[fallthrough]];
+                    default: // Stretch + a column container's Baseline + fallback
                         itemCrossPos = lineCrossStart + marginStart;
                         break;
                 }
