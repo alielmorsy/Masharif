@@ -7,6 +7,7 @@
 //           <repo_root>/masharifcore/structure/*.cpp -o harness.exe
 
 #include <masharifcore/Masharif.h>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -26,6 +27,14 @@ namespace {
         return n;
     }
 
+    // A NaN or infinity reaching the JSON would either abort the parse with an opaque error or,
+    // worse, spell differently per toolchain (`nan` vs `-nan(ind)`). Emit JSON null instead and
+    // let compare.mjs report it as the unresolved-size bug it is.
+    void PrintNumber(const float v) {
+        if (std::isfinite(v)) std::cout << v;
+        else std::cout << "null";
+    }
+
     void PrintFixture(const std::string &name) {
         std::cout << "\"" << name << "\":{";
         bool first = true;
@@ -33,11 +42,15 @@ namespace {
             if (!first) std::cout << ",";
             first = false;
             auto &l = r.node->GetLayout();
-            std::cout << "\"" << r.id << "\":{"
-                      << "\"x\":" << l.ComputedX << ","
-                      << "\"y\":" << l.ComputedY << ","
-                      << "\"w\":" << l.ComputedWidth << ","
-                      << "\"h\":" << l.ComputedHeight << "}";
+            std::cout << "\"" << r.id << "\":{\"x\":";
+            PrintNumber(l.ComputedX);
+            std::cout << ",\"y\":";
+            PrintNumber(l.ComputedY);
+            std::cout << ",\"w\":";
+            PrintNumber(l.ComputedWidth);
+            std::cout << ",\"h\":";
+            PrintNumber(l.ComputedHeight);
+            std::cout << "}";
         }
         std::cout << "}";
         g_records.clear();
@@ -420,6 +433,13 @@ namespace {
 
         root->Calculate(W, H);
     }
+
+    // ---------------------------------------------------- generated full-page fixtures
+    // Emitted from pages/*.mjs by generate.mjs, which writes the matching fixtures/*.html
+    // from the same spec tree -- see this directory's README.md. Included rather than
+    // compiled separately so the generated bodies get the same N()/PrintFixture() helpers
+    // the hand-written fixtures above use.
+#include "generated_cases.inc"
 }
 
 int main() {
@@ -441,6 +461,7 @@ int main() {
         {"flex_basis_percent_and_auto", Fixture_flex_basis_percent_and_auto},
         {"block_margin_left_offset", Fixture_block_margin_left_offset},
         {"absolute_pinned_both_insets", Fixture_absolute_pinned_both_insets},
+#include "generated_list.inc"
     };
 
     std::cout << "{";

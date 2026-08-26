@@ -1,45 +1,141 @@
-// Diffs masharif_results.json (from harness.exe) against web_results.json (from extract.mjs).
-// Prints a per-fixture, per-node, per-field table and a final PASS/FAIL summary.
-import { readFileSync } from 'fs';
+// Diffs masharif_results.json (from the harness) against web_results.json (from extract.mjs).
+//
+// The generated full-page fixtures push this to ~600 compared nodes, so stdout carries only the
+// per-fixture roll-up plus every node that is not a clean match; the full per-node table goes to
+// results.md, which is where you go once a summary line says something is wrong.
+import { readFileSync, writeFileSync } from 'fs';
 
 const EPS = 0.6; // px tolerance: sub-pixel rounding/rendering differences are not bugs
+
+// Divergences that have been read back to a specific line of the engine and are asserted here on
+// purpose, so they register as "still exactly this wrong" rather than as noise. Keys are
+// `<fixture>.<id>`. Anything here that starts MATCHING is reported too -- a stale entry means the
+// engine was fixed and the declaration should go.
+const KNOWN_GAPS = new Map([
+    ['gap_block_margin_top.b_second',
+        'NormalFlowStrategy.cpp:95-99 -- LocalY omits the child\'s own margin-top, so it shifts the following sibling instead of itself.'],
+    ['gap_block_margin_top.b_third',
+        'Same cause: the second box never moved, so everything after it is offset by that margin instead.'],
+    ['gap_inline_container_padding.chip_a',
+        'NormalFlowStrategy.cpp:12-21 -- LayoutLine starts x at the border-box origin, so the container\'s padding does not indent its inline children.'],
+    ['gap_inline_container_padding.chip_b',
+        'Same cause, second box on the line.'],
+    ['gap_block_auto_height_padding.wrapper',
+        'Node.cpp:447-451 -- ApplyBlockAutoHeight adds padding-top on top of a child LocalY that already includes it, so the derived height counts it twice.'],
+
+    // align-items/align-self:baseline is a deliberate non-implementation: the engine has no text
+    // or baseline metrics, so it falls back to FlexStart (FlexLayoutStrategy.cpp:893-899). CSS
+    // synthesises a textless box's baseline from its bottom margin edge, i.e. bottom-aligns it,
+    // so the browser can only ever disagree. Only nodes whose ONLY difference is this are listed
+    // -- page_marketing_landing's hero_stats items are left as mismatches because they also carry
+    // the justify-content gap error, and declaring them would hide it.
+    ['align_items_baseline.c1',
+        'FlexLayoutStrategy.cpp:893-899 -- Baseline falls back to FlexStart; CSS bottom-aligns a textless box.'],
+    ['page_flex_kitchen_sink.ai4_a',
+        'FlexLayoutStrategy.cpp:893-899 -- Baseline falls back to FlexStart; CSS bottom-aligns a textless box.'],
+    ['page_flex_kitchen_sink.ai4_c',
+        'FlexLayoutStrategy.cpp:893-899 -- Baseline falls back to FlexStart; CSS bottom-aligns a textless box.'],
+]);
 
 const masharif = JSON.parse(readFileSync('masharif_results.json', 'utf8'));
 const web = JSON.parse(readFileSync('web_results.json', 'utf8'));
 
-let totalNodes = 0, mismatchedNodes = 0;
-const report = [];
+const FIELDS = ['x', 'y', 'w', 'h'];
+const rows = [];
 
 for (const fixture of Object.keys(web)) {
     const wNodes = web[fixture];
     const mNodes = masharif[fixture];
     if (!mNodes) {
-        report.push(`FIXTURE ${fixture}: MISSING from masharif_results.json`);
+        rows.push({ fixture, id: '(whole fixture)', status: 'MISSING', detail: 'absent from masharif_results.json' });
         continue;
     }
     for (const id of Object.keys(wNodes)) {
-        totalNodes++;
         const w = wNodes[id];
         const m = mNodes[id];
+        const key = `${fixture}.${id}`;
         if (!m) {
-            mismatchedNodes++;
-            report.push(`${fixture}.${id}: MISSING in masharif output`);
+            rows.push({ fixture, id, status: 'MISSING', detail: 'absent from masharif output' });
             continue;
         }
-        const diffs = [];
-        for (const field of ['x', 'y', 'w', 'h']) {
-            const dv = Math.abs(w[field] - m[field]);
-            if (dv > EPS) diffs.push(`${field}: web=${w[field]} masharif=${m[field]} (Δ${dv.toFixed(2)})`);
+        // null is what the harness emits for a non-finite computed size (see PrintNumber): an
+        // unresolved box, not a rounding difference, so it can never be a match.
+        const unresolved = FIELDS.filter((f) => typeof m[f] !== 'number');
+        if (unresolved.length) {
+            rows.push({ fixture, id, status: 'UNRESOLVED', detail: `masharif produced no finite ${unresolved.join('/')}` });
+            continue;
         }
-        if (diffs.length) {
-            mismatchedNodes++;
-            report.push(`${fixture}.${id}: ${diffs.join(', ')}`);
+        const diffs = FIELDS
+            .map((f) => ({ f, d: m[f] - w[f] }))
+            .filter(({ d }) => Math.abs(d) > EPS);
+        const fmt = (o) => `(${o.x}, ${o.y}, ${o.w}x${o.h})`;
+        if (diffs.length === 0) {
+            rows.push({ fixture, id, status: KNOWN_GAPS.has(key) ? 'GAP CLOSED' : 'OK', web: fmt(w), masharif: fmt(m) });
         } else {
-            report.push(`${fixture}.${id}: OK (x=${m.x},y=${m.y},w=${m.w},h=${m.h})`);
+            rows.push({
+                fixture, id,
+                status: KNOWN_GAPS.has(key) ? 'KNOWN GAP' : 'MISMATCH',
+                web: fmt(w), masharif: fmt(m),
+                detail: diffs.map(({ f, d }) => `${f} web=${w[f]} masharif=${m[f]} (${d > 0 ? '+' : ''}${d.toFixed(2)})`).join(', '),
+            });
         }
+    }
+    for (const id of Object.keys(mNodes)) {
+        if (!(id in wNodes)) rows.push({ fixture, id, status: 'EXTRA', detail: 'in masharif output but not in the fixture HTML' });
     }
 }
 
-console.log(report.join('\n'));
-console.log('\n--- SUMMARY ---');
-console.log(`${totalNodes} nodes compared, ${mismatchedNodes} mismatched, ${totalNodes - mismatchedNodes} matched (tolerance ${EPS}px)`);
+// ---------------------------------------------------------------- report file
+
+const lines = ['# Browser cross-check results', '',
+    `Tolerance ${EPS}px. Generated by compare.mjs; do not edit.`, ''];
+let currentFixture = null;
+for (const r of rows) {
+    if (r.fixture !== currentFixture) {
+        currentFixture = r.fixture;
+        lines.push('', `## ${currentFixture}`, '',
+            '| id | status | browser (x,y,wxh) | masharif (x,y,wxh) | detail |', '|---|---|---|---|---|');
+    }
+    const mark = r.status === 'OK' ? 'OK' : `**${r.status}**`;
+    lines.push(`| ${r.id} | ${mark} | ${r.web ?? '-'} | ${r.masharif ?? '-'} | ${r.detail ?? ''} |`);
+}
+writeFileSync('results.md', lines.join('\n') + '\n', 'utf8');
+
+// ---------------------------------------------------------------- stdout
+
+const byFixture = new Map();
+for (const r of rows) {
+    if (!byFixture.has(r.fixture)) byFixture.set(r.fixture, []);
+    byFixture.get(r.fixture).push(r);
+}
+
+const BAD = new Set(['MISMATCH', 'MISSING', 'EXTRA', 'UNRESOLVED']);
+const pad = (s, n) => String(s).padEnd(n);
+const nameWidth = Math.max(...[...byFixture.keys()].map((f) => f.length));
+
+console.log(`${pad('fixture', nameWidth)}  nodes    ok   gap   bad`);
+for (const [fixture, list] of byFixture) {
+    const ok = list.filter((r) => r.status === 'OK' || r.status === 'GAP CLOSED').length;
+    const gap = list.filter((r) => r.status === 'KNOWN GAP').length;
+    const bad = list.filter((r) => BAD.has(r.status)).length;
+    console.log(`${pad(fixture, nameWidth)}  ${pad(list.length, 5)}  ${pad(ok, 4)}  ${pad(gap, 4)}  ${bad ? bad : '-'}`);
+}
+
+const problems = rows.filter((r) => BAD.has(r.status));
+if (problems.length) {
+    console.log(`\n--- ${problems.length} unexpected (not a declared known gap) ---`);
+    for (const r of problems) console.log(`  ${r.fixture}.${r.id}: ${r.status} ${r.detail ?? ''}`);
+}
+
+const closed = rows.filter((r) => r.status === 'GAP CLOSED');
+if (closed.length) {
+    console.log(`\n--- ${closed.length} declared known gap(s) now matching: drop them from KNOWN_GAPS ---`);
+    for (const r of closed) console.log(`  ${r.fixture}.${r.id}`);
+}
+
+const total = rows.length;
+const matched = rows.filter((r) => r.status === 'OK' || r.status === 'GAP CLOSED').length;
+const gaps = rows.filter((r) => r.status === 'KNOWN GAP').length;
+console.log(`\n--- SUMMARY ---`);
+console.log(`${total} nodes compared, ${matched} matched, ${gaps} known gap(s), ` +
+    `${problems.length} unexpected (tolerance ${EPS}px). Full table in results.md`);

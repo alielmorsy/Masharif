@@ -1,0 +1,149 @@
+<!doctype html><html><head><meta charset="utf-8"><title>page_app_dashboard</title><style>
+*{box-sizing:border-box;margin:0;padding:0;border:0 solid transparent}
+html,body{margin:0;padding:0}
+</style></head><body>
+<div id="root" style="display:flex;flex-direction:column;width:1280px;height:860px;min-width:0px;min-height:0px;background:#f4f5f7;">
+  <div id="topbar" style="display:flex;flex-direction:row;align-items:center;column-gap:16px;height:56px;min-width:0px;min-height:0px;padding-right:20px;padding-left:20px;flex-grow:0;flex-shrink:0;background:#1f2933;">
+    <div id="brand" style="display:flex;flex-direction:row;align-items:center;column-gap:8px;width:180px;height:32px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+      <div id="brand_mark" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+      <div id="brand_text" style="display:flex;width:120px;height:14px;min-width:0px;min-height:0px;background:#e4e7eb;"></div>
+    </div>
+    <div id="topnav" style="display:flex;flex-direction:row;align-items:center;column-gap:20px;height:32px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+      <div id="nav_a" style="display:flex;width:64px;height:14px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+      <div id="nav_b" style="display:flex;width:72px;height:14px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+      <div id="nav_c" style="display:flex;width:56px;height:14px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+    </div>
+    <div id="topbar_gap" style="display:flex;height:1px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;"></div>
+    <div id="actions" style="display:flex;flex-direction:row;align-items:center;column-gap:12px;height:32px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+      <div id="search" style="display:flex;width:220px;height:32px;min-width:0px;min-height:0px;background:#323f4b;"></div>
+      <div id="bell_wrap" style="display:flex;justify-content:center;align-items:center;width:32px;height:32px;min-width:0px;min-height:0px;position:relative;flex-grow:0;flex-shrink:0;background:#323f4b;">
+        <div id="bell" style="display:flex;width:20px;height:20px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+        <div id="badge" style="display:flex;width:16px;height:16px;min-width:0px;min-height:0px;position:absolute;top:-4px;right:-4px;background:#e12d39;"></div>
+      </div>
+      <div id="avatar" style="display:flex;width:32px;height:32px;min-width:0px;min-height:0px;background:#f0a132;"></div>
+    </div>
+  </div>
+  <div id="shell" style="display:flex;flex-direction:row;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+    <div id="sidebar" style="display:flex;flex-direction:column;row-gap:20px;width:240px;min-width:0px;min-height:0px;padding-top:16px;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;padding-left:16px;border-color:rgba(0,0,0,.35);flex-grow:0;flex-shrink:0;background:#1f2933;">
+      <div id="side1" style="display:flex;flex-direction:column;row-gap:8px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+        <div id="side1_title" style="display:flex;width:80px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+        <div id="side1_item0" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+        <div id="side1_item1" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+        <div id="side1_item2" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+      </div>
+      <div id="side2" style="display:flex;flex-direction:column;row-gap:8px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+        <div id="side2_title" style="display:flex;width:80px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+        <div id="side2_item0" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+        <div id="side2_item1" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+        <div id="side2_item2" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+        <div id="side2_item3" style="display:flex;height:32px;min-width:0px;min-height:0px;background:#2b3a47;"></div>
+      </div>
+      <div id="side_gap" style="display:flex;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;"></div>
+      <div id="side_footer" style="display:flex;flex-direction:row;align-items:center;column-gap:8px;height:40px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+        <div id="sf_avatar" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+        <div id="sf_text" style="display:flex;height:12px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#9aa5b1;"></div>
+      </div>
+    </div>
+    <div id="main" style="display:flex;flex-direction:column;row-gap:20px;min-width:0px;min-height:0px;padding-top:24px;padding-right:24px;padding-bottom:24px;padding-left:24px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+      <div id="crumbs" style="display:flex;flex-direction:row;align-items:center;column-gap:8px;height:16px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+        <div id="cr1" style="display:flex;width:60px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+        <div id="cr_s1" style="display:flex;width:6px;height:6px;min-width:0px;min-height:0px;background:#d9dee4;"></div>
+        <div id="cr2" style="display:flex;width:80px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+        <div id="cr_s2" style="display:flex;width:6px;height:6px;min-width:0px;min-height:0px;background:#d9dee4;"></div>
+        <div id="cr3" style="display:flex;width:100px;height:12px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+      </div>
+      <div id="stats" style="display:flex;flex-direction:row;column-gap:16px;height:96px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+        <div id="stat1" style="display:flex;flex-direction:column;row-gap:10px;min-width:0px;min-height:0px;padding-top:16px;border-top-width:1px;border-top-style:solid;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;border-bottom-width:1px;border-bottom-style:solid;padding-left:16px;border-left-width:1px;border-left-style:solid;border-color:rgba(0,0,0,.35);flex-grow:1;flex-shrink:1;flex-basis:0px;background:#ffffff;">
+          <div id="stat1_label" style="display:flex;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+          <div id="stat1_value" style="display:flex;width:80px;height:24px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+        </div>
+        <div id="stat2" style="display:flex;flex-direction:column;row-gap:10px;min-width:0px;min-height:0px;padding-top:16px;border-top-width:1px;border-top-style:solid;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;border-bottom-width:1px;border-bottom-style:solid;padding-left:16px;border-left-width:1px;border-left-style:solid;border-color:rgba(0,0,0,.35);flex-grow:1;flex-shrink:1;flex-basis:0px;background:#ffffff;">
+          <div id="stat2_label" style="display:flex;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+          <div id="stat2_value" style="display:flex;width:80px;height:24px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+        </div>
+        <div id="stat3" style="display:flex;flex-direction:column;row-gap:10px;min-width:0px;min-height:0px;padding-top:16px;border-top-width:1px;border-top-style:solid;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;border-bottom-width:1px;border-bottom-style:solid;padding-left:16px;border-left-width:1px;border-left-style:solid;border-color:rgba(0,0,0,.35);flex-grow:1;flex-shrink:1;flex-basis:0px;background:#ffffff;">
+          <div id="stat3_label" style="display:flex;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+          <div id="stat3_value" style="display:flex;width:80px;height:24px;min-width:0px;min-height:0px;background:#f0a132;"></div>
+        </div>
+        <div id="stat4" style="display:flex;flex-direction:column;row-gap:10px;min-width:0px;min-height:0px;padding-top:16px;border-top-width:1px;border-top-style:solid;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;border-bottom-width:1px;border-bottom-style:solid;padding-left:16px;border-left-width:1px;border-left-style:solid;border-color:rgba(0,0,0,.35);flex-grow:1;flex-shrink:1;flex-basis:0px;background:#ffffff;">
+          <div id="stat4_label" style="display:flex;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+          <div id="stat4_value" style="display:flex;width:80px;height:24px;min-width:0px;min-height:0px;background:#e12d39;"></div>
+        </div>
+      </div>
+      <div id="panels" style="display:flex;flex-direction:row;column-gap:20px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+        <div id="chart_panel" style="display:flex;flex-direction:column;row-gap:12px;min-width:0px;min-height:0px;padding-top:16px;border-top-width:1px;border-top-style:solid;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;border-bottom-width:1px;border-bottom-style:solid;padding-left:16px;border-left-width:1px;border-left-style:solid;border-color:rgba(0,0,0,.35);flex-grow:2;flex-shrink:1;flex-basis:0px;background:#ffffff;">
+          <div id="chart_head" style="display:flex;flex-direction:row;justify-content:space-between;align-items:center;height:20px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+            <div id="ch_title" style="display:flex;width:120px;height:14px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+            <div id="ch_legend" style="display:flex;flex-direction:row;column-gap:10px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+              <div id="lg1" style="display:flex;width:40px;height:10px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+              <div id="lg2" style="display:flex;width:40px;height:10px;min-width:0px;min-height:0px;background:#f0a132;"></div>
+            </div>
+          </div>
+          <div id="chart_body" style="display:flex;flex-direction:row;align-items:flex-end;column-gap:8px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+            <div id="cbar0" style="display:flex;height:30%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#2f6feb;"></div>
+            <div id="cbar1" style="display:flex;height:55%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#f0a132;"></div>
+            <div id="cbar2" style="display:flex;height:40%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#2f6feb;"></div>
+            <div id="cbar3" style="display:flex;height:80%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#f0a132;"></div>
+            <div id="cbar4" style="display:flex;height:65%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#2f6feb;"></div>
+            <div id="cbar5" style="display:flex;height:95%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#f0a132;"></div>
+            <div id="cbar6" style="display:flex;height:50%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#2f6feb;"></div>
+            <div id="cbar7" style="display:flex;height:70%;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;background:#f0a132;"></div>
+          </div>
+        </div>
+        <div id="list_panel" style="display:flex;flex-direction:column;row-gap:10px;min-width:0px;min-height:0px;padding-top:16px;border-top-width:1px;border-top-style:solid;padding-right:16px;border-right-width:1px;border-right-style:solid;padding-bottom:16px;border-bottom-width:1px;border-bottom-style:solid;padding-left:16px;border-left-width:1px;border-left-style:solid;border-color:rgba(0,0,0,.35);flex-grow:1;flex-shrink:1;flex-basis:0px;background:#ffffff;">
+          <div id="lp_title" style="display:flex;width:100px;height:14px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+          <div id="row1" style="display:flex;flex-direction:row;align-items:center;column-gap:10px;height:44px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#f4f5f7;">
+            <div id="row1_avatar" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+            <div id="row1_text" style="display:flex;flex-direction:column;row-gap:6px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+              <div id="row1_t1" style="display:flex;height:10px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+              <div id="row1_t2" style="display:flex;width:60%;height:8px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+            </div>
+            <div id="row1_pill" style="display:flex;width:48px;height:18px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+          </div>
+          <div id="row2" style="display:flex;flex-direction:row;align-items:center;column-gap:10px;height:44px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#f4f5f7;">
+            <div id="row2_avatar" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+            <div id="row2_text" style="display:flex;flex-direction:column;row-gap:6px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+              <div id="row2_t1" style="display:flex;height:10px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+              <div id="row2_t2" style="display:flex;width:60%;height:8px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+            </div>
+            <div id="row2_pill" style="display:flex;width:48px;height:18px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+          </div>
+          <div id="row3" style="display:flex;flex-direction:row;align-items:center;column-gap:10px;height:44px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#f4f5f7;">
+            <div id="row3_avatar" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+            <div id="row3_text" style="display:flex;flex-direction:column;row-gap:6px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+              <div id="row3_t1" style="display:flex;height:10px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+              <div id="row3_t2" style="display:flex;width:60%;height:8px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+            </div>
+            <div id="row3_pill" style="display:flex;width:48px;height:18px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+          </div>
+          <div id="row4" style="display:flex;flex-direction:row;align-items:center;column-gap:10px;height:44px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#f4f5f7;">
+            <div id="row4_avatar" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+            <div id="row4_text" style="display:flex;flex-direction:column;row-gap:6px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+              <div id="row4_t1" style="display:flex;height:10px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+              <div id="row4_t2" style="display:flex;width:60%;height:8px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+            </div>
+            <div id="row4_pill" style="display:flex;width:48px;height:18px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+          </div>
+          <div id="row5" style="display:flex;flex-direction:row;align-items:center;column-gap:10px;height:44px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#f4f5f7;">
+            <div id="row5_avatar" style="display:flex;width:28px;height:28px;min-width:0px;min-height:0px;background:#2f6feb;"></div>
+            <div id="row5_text" style="display:flex;flex-direction:column;row-gap:6px;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;">
+              <div id="row5_t1" style="display:flex;height:10px;min-width:0px;min-height:0px;background:#3e4c59;"></div>
+              <div id="row5_t2" style="display:flex;width:60%;height:8px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+            </div>
+            <div id="row5_pill" style="display:flex;width:48px;height:18px;min-width:0px;min-height:0px;background:#3aa76d;"></div>
+          </div>
+          <div id="lp_gap" style="display:flex;min-width:0px;min-height:0px;flex-grow:1;flex-shrink:1;flex-basis:0px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="footer" style="display:flex;flex-direction:row;justify-content:space-between;align-items:center;height:48px;min-width:0px;min-height:0px;border-top-width:1px;border-top-style:solid;padding-right:24px;padding-left:24px;border-color:rgba(0,0,0,.35);flex-grow:0;flex-shrink:0;background:#ffffff;">
+    <div id="ft_left" style="display:flex;width:200px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+    <div id="ft_right" style="display:flex;flex-direction:row;column-gap:16px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+      <div id="fr1" style="display:flex;width:60px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+      <div id="fr2" style="display:flex;width:60px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+      <div id="fr3" style="display:flex;width:60px;height:12px;min-width:0px;min-height:0px;background:#9aa5b1;"></div>
+    </div>
+  </div>
+</div>
+</body></html>
