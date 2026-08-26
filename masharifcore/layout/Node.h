@@ -140,6 +140,47 @@ namespace masharif
             m_Parent = parent;
         }
 
+        /// This box's padding in used pixels. CSS resolves EVERY percentage padding -- all four
+        /// sides, not just the horizontal pair -- against the containing block's WIDTH, which is
+        /// what m_PercentBasis holds. Reading CSSValue::Value directly is only ever right for a Px
+        /// padding: on a Percent one it yields the percentage NUMBER (10 for `10%`).
+        [[nodiscard]] float PaddingLeft() const { return m_Style.GetPadding().Left.ResolveValue(m_PercentBasis); }
+        [[nodiscard]] float PaddingRight() const { return m_Style.GetPadding().Right.ResolveValue(m_PercentBasis); }
+        [[nodiscard]] float PaddingTop() const { return m_Style.GetPadding().Top.ResolveValue(m_PercentBasis); }
+        [[nodiscard]] float PaddingBottom() const { return m_Style.GetPadding().Bottom.ResolveValue(m_PercentBasis); }
+
+        /// Border box minus content box on one axis: the padding pair plus the border pair. Border
+        /// widths are Px-only, so only the padding half needs resolving.
+        [[nodiscard]] float PaddingBorderHorizontal() const
+        {
+            return PaddingLeft() + PaddingRight()
+                + m_Style.GetBorder().WidthLeft.Value + m_Style.GetBorder().WidthRight.Value;
+        }
+
+        [[nodiscard]] float PaddingBorderVertical() const
+        {
+            return PaddingTop() + PaddingBottom()
+                + m_Style.GetBorder().WidthTop.Value + m_Style.GetBorder().WidthBottom.Value;
+        }
+
+        /// Adopt `width` as the reference for this box's own percentage padding/margins. Callers
+        /// pass their content-box width; NaN (a max-content measure) has no reference to offer, so
+        /// percentages resolve against zero there, as CSS does for an indefinite containing block.
+        void SetPercentBasis(const float width) { m_PercentBasis = std::isnan(width) ? 0.0f : width; }
+
+        /// Whether this box is laid out BY a flex container -- in-flow, with a flex parent. The
+        /// distinction matters on the inline axis: a flex item with `width: auto` is content-sized
+        /// and only `align-self: stretch` widens it, while a block-level box with `width: auto`
+        /// fills its containing block outright.
+        [[nodiscard]] bool IsFlexItem() const
+        {
+            if (!m_Parent) return false;
+            const auto position = m_Style.GetDimensions().Position;
+            if (position != PositionType::Static && position != PositionType::Relative) return false;
+            const auto parentDisplay = m_Parent->m_Style.GetDimensions().Display;
+            return parentDisplay == OuterDisplay::Flex || parentDisplay == OuterDisplay::InlineFlex;
+        }
+
         /// True only while LayoutContentsWithDefiniteSize drives the strategy: the parent has
         /// resolved this node's border box, so the flex strategy must NOT shrink-to-fit an
         /// AUTO main axis (that would re-collapse a cross-stretched grow container).
@@ -223,6 +264,16 @@ namespace masharif
 
         /// See CrossSizeIsDefinite().
         bool m_crossSizeDefinite = false;
+
+        /// The containing block's inline size: the ONE reference every percentage padding and
+        /// margin on this box resolves against (CSS 2.1 8.3/8.4 -- top and bottom included).
+        ///
+        /// Written by the parent's strategy just before it solves this child, NOT derived from the
+        /// available space handed to the solve, because on two paths that space is a different box
+        /// entirely: the flex-basis phase deliberately measures an AUTO-main item at NaN width, and
+        /// LayoutContentsWithDefiniteSize hands the box its OWN content width. Resolving `10%`
+        /// against either is how a percentage padding ends up a tenth of the wrong box.
+        float m_PercentBasis = 0.0f;
 
         /// True while the descendants reflect an impl-path (available-space) strategy run
         /// rather than the last definite-size distribution; forces the next definite pass to

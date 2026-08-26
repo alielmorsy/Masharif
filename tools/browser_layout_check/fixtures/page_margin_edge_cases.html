@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><title>page_margin_edge_cases</title><style>
+*{box-sizing:border-box;margin:0;padding:0;border:0 solid transparent}
+html,body{margin:0;padding:0}
+</style></head><body>
+<div id="root" style="display:flex;flex-direction:column;align-items:flex-start;row-gap:20px;width:1100px;height:320px;min-width:0px;min-height:0px;background:#fbfbfd;">
+  <div id="band_flex" style="display:flex;flex-direction:row;column-gap:20px;height:60px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+    <div id="am_grow" style="display:flex;flex-direction:row;width:300px;height:60px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#ffffff;">
+      <div id="am_grow_a" style="display:flex;width:30px;height:40px;min-width:0px;min-height:0px;flex-grow:1;background:#3d5afe;"></div>
+      <div id="am_grow_b" style="display:flex;width:70px;height:40px;min-width:0px;min-height:0px;margin-left:auto;background:#1fae7a;"></div>
+    </div>
+    <div id="am_justify" style="display:flex;flex-direction:row;justify-content:center;width:300px;height:60px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#ffffff;">
+      <div id="am_justify_a" style="display:flex;width:100px;height:40px;min-width:0px;min-height:0px;margin-left:auto;background:#ff8a3d;"></div>
+    </div>
+    <div id="am_gm" style="display:flex;flex-direction:row;column-gap:20px;width:300px;height:60px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#ffffff;">
+      <div id="am_gm_a" style="display:flex;width:70px;height:40px;min-width:0px;min-height:0px;margin-right:auto;background:#3d5afe;"></div>
+      <div id="am_gm_b" style="display:flex;width:70px;height:40px;min-width:0px;min-height:0px;margin-left:10px;background:#e0245e;"></div>
+    </div>
+    <div id="am_of" style="display:flex;flex-direction:row;width:100px;height:60px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;background:#ffffff;">
+      <div id="am_of_a" style="display:flex;width:70px;height:40px;min-width:0px;min-height:0px;margin-right:auto;flex-shrink:0;background:#1fae7a;"></div>
+      <div id="am_of_b" style="display:flex;width:70px;height:40px;min-width:0px;min-height:0px;flex-shrink:0;background:#ff8a3d;"></div>
+    </div>
+  </div>
+  <div id="band_abs" style="display:flex;flex-direction:row;column-gap:20px;height:200px;min-width:0px;min-height:0px;flex-grow:0;flex-shrink:0;">
+    <div id="abm_inset" style="display:flex;flex-direction:row;width:300px;height:200px;min-width:0px;min-height:0px;position:relative;flex-grow:0;flex-shrink:0;background:#dcdfe6;">
+      <div id="abm_start" style="display:flex;width:100px;height:50px;min-width:0px;min-height:0px;margin-top:7px;margin-left:5px;position:absolute;top:20px;left:10px;background:#3d5afe;"></div>
+      <div id="abm_end" style="display:flex;width:100px;height:50px;min-width:0px;min-height:0px;margin-right:5px;margin-bottom:7px;position:absolute;right:10px;bottom:20px;background:#1fae7a;"></div>
+    </div>
+    <div id="abm_static" style="display:flex;flex-direction:row;justify-content:center;align-items:center;width:300px;height:200px;min-width:0px;min-height:0px;position:relative;flex-grow:0;flex-shrink:0;background:#dcdfe6;">
+      <div id="abm_static_child" style="display:flex;width:100px;height:50px;min-width:0px;min-height:0px;margin-top:8px;margin-right:30px;margin-bottom:12px;margin-left:10px;position:absolute;background:#ff8a3d;"></div>
+    </div>
+    <div id="abm_single" style="display:flex;flex-direction:row;width:300px;height:200px;min-width:0px;min-height:0px;position:relative;flex-grow:0;flex-shrink:0;background:#dcdfe6;">
+      <div id="abm_single_child" style="display:flex;width:100px;height:50px;min-width:0px;min-height:0px;margin-top:auto;margin-right:30px;margin-bottom:auto;margin-left:auto;position:absolute;top:0px;right:20px;bottom:0px;left:10px;background:#e0245e;"></div>
+    </div>
+  </div>
+</div>
+</body></html>

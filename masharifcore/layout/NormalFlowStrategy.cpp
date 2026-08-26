@@ -35,26 +35,28 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
 
     const auto &containerStyle = container.GetStyle();
     const auto &containerBorder = containerStyle.GetBorder();
-    const auto &containerPadding = containerStyle.GetPadding();
+    // Percentage paddings resolve against the container's own containing block, never against
+    // anything derived here -- Node::PaddingLeft and friends hold that reference.
+    const float containerPadLeft = container.PaddingLeft();
+    const float containerPadTop = container.PaddingTop();
 
     // Shrink the incoming available space to this container's own content box, mirroring
     // FlexLayoutStrategy::ShrinkAvailableToContentBox. Without this, block/flex children resolve their
     // AUTO width against the raw viewport instead of the container, overflowing a narrow container.
+    //
+    // A definite ComputedWidth/Height is the only precondition: ComputeDimensions has already run,
+    // and it resolves the AUTO cases too -- an AUTO width to "fill the containing block, less this
+    // box's own margins", an inset-filled AUTO height to the top..bottom gap. An AUTO height that
+    // is still content-sized leaves ComputedHeight NaN at this point (ApplyBlockAutoHeight runs
+    // only after the strategy returns), which is exactly what the NaN test skips.
     float availW = availableWidth;
     float availH = availableHeight;
-    {
-        const auto &dim = containerStyle.GetDimensions();
-        const bool widthExplicit = dim.Width.Unit == CSSUnit::Px || dim.Width.Unit == CSSUnit::Percent;
-        const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
-        if (widthExplicit && !std::isnan(container.GetLayout().ComputedWidth))
-            availW = std::max(0.0f, container.GetLayout().ComputedWidth
-                                    - containerPadding.Left.Value - containerPadding.Right.Value
-                                    - containerBorder.WidthLeft.Value - containerBorder.WidthRight.Value);
-        if (heightExplicit && !std::isnan(container.GetLayout().ComputedHeight))
-            availH = std::max(0.0f, container.GetLayout().ComputedHeight
-                                    - containerPadding.Top.Value - containerPadding.Bottom.Value
-                                    - containerBorder.WidthTop.Value - containerBorder.WidthBottom.Value);
-    }
+    if (!std::isnan(container.GetLayout().ComputedWidth))
+        availW = std::max(0.0f, container.GetLayout().ComputedWidth
+                                - container.PaddingBorderHorizontal());
+    if (!std::isnan(container.GetLayout().ComputedHeight))
+        availH = std::max(0.0f, container.GetLayout().ComputedHeight
+                                - container.PaddingBorderVertical());
 
     for (const auto &child: container.m_Children) {
         const auto &childStyle = child->GetStyle();
@@ -72,11 +74,29 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         }
         auto &childLayout = child->GetLayout();
         const auto &childMargin = childStyle.GetMargin();
-        const auto &childPadding = childStyle.GetPadding();
-
-        child->LayoutImpl(ctx, availW, availH);
-
         const auto display = childStyle.GetDimensions().Display;
+
+        // availW is this container's content box, which is exactly the containing block every
+        // percentage padding and margin on the child resolves against.
+        child->SetPercentBasis(availW);
+
+        // A block-level box with `width: auto` FILLS its containing block; shrink-to-fit belongs to
+        // floats, inline-level boxes and out-of-flow boxes. FlexLayoutStrategy gates its AUTO-main-axis
+        // shrink-wrap on MainSizeIsDefinite(), so a block-level flex child needs that flag set or it
+        // collapses to its content width and takes its whole subtree with it (grow items resolving
+        // against a 0-wide container). Conditions, all necessary:
+        //   - Flex only. A Block child routes back here, which never reads the flag; InlineFlex is
+        //     inline-level, where shrink-to-fit IS correct.
+        //   - Row main axis only. The flag means "the child's MAIN axis is definite", and only the
+        //     inline axis fills — a column container's AUTO height must still be content-sized.
+        //   - Definite available width. There is nothing to fill otherwise.
+        const bool fillsInlineAxis = display == OuterDisplay::Flex
+                                     && childStyle.GetFlex().IsRow()
+                                     && !std::isnan(availW);
+        if (fillsInlineAxis) child->m_mainSizeDefinite = true;
+        child->LayoutImpl(ctx, availW, availH);
+        if (fillsInlineAxis) child->m_mainSizeDefinite = false;
+
         if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
             if (!line.Empty()) {
                 LayoutLine(line, currentY);
@@ -89,9 +109,9 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
             // ComputeDimensions already shrank an AUTO-width child by both its margins; without
             // adding margin-left here that reserved space silently shifts to the right edge
             // instead of padding the left one.
-            childLayout.LocalX = containerPadding.Left.Value + containerBorder.WidthLeft.Value
+            childLayout.LocalX = containerPadLeft + containerBorder.WidthLeft.Value
                                   + childMargin.Left.Value;
-            childLayout.LocalY = currentY + containerPadding.Top.Value + containerBorder.WidthTop.Value;
+            childLayout.LocalY = currentY + containerPadTop + containerBorder.WidthTop.Value;
             currentY += childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value;
         } else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {
             const float childWidth = childLayout.ComputedWidth + childMargin.Left.Value + childMargin.Right.Value;
@@ -103,13 +123,11 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
                 currentX = 0.0f;
                 lineHeight = 0.0f;
             }
-            const auto &childBorder = childStyle.GetBorder();
             line.Append(child.get());
             currentX += childWidth;
             lineHeight = std::max(lineHeight,
                                   childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value +
-                                  childPadding.Top.Value + childPadding.Bottom.Value +
-                                  childBorder.WidthTop.Value + childBorder.WidthBottom.Value);
+                                  child->PaddingBorderVertical());
         }
     }
 

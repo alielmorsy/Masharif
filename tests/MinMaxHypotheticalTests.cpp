@@ -221,3 +221,71 @@ TEST(MinMaxHypotheticalTests, min_height_row_and_grow_filler_fill_a_definite_col
     ASSERT_FLOAT_EQ(22.0f, filler->GetLayout().LocalY);
     ASSERT_FLOAT_EQ(78.0f, filler->GetLayout().ComputedHeight);
 }
+
+/// Flexbox 9.4 step 11: the cross size a stretch produces is clamped by the item's OWN used min
+/// and max cross size. Nothing else clamps it -- the item's ComputeDimensions skips the clamp for
+/// an AUTO size (there is no number to clamp yet), so an unclamped stretch escapes max-height
+/// entirely and fills the line.
+TEST(MinMaxHypotheticalTests, row_stretch_cross_size_is_clamped_by_max_height) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+    root->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+    root->GetStyle().Modify<Dimensions>().Height = CSSValue(56.0f);
+
+    auto capped = std::make_shared<Node>();
+    capped->SetDisplay(OuterDisplay::Flex);
+    capped->GetStyle().Modify<Dimensions>().Width = CSSValue(200.0f);
+    capped->GetStyle().Modify<Dimensions>().MaxHeight = CSSValue(30.0f);
+    capped->GetStyle().Modify<CSSFlex>().AlignSelf = AlignItems::Stretch;
+    root->AddChild(capped);
+
+    root->Calculate(300.0f, 56.0f);
+
+    EXPECT_FLOAT_EQ(30.0f, capped->GetLayout().ComputedHeight);
+    // Clamped short of the line, a stretched item stays on the line's start edge.
+    EXPECT_FLOAT_EQ(0.0f, capped->GetLayout().ComputedY);
+}
+
+/// The same clamp raises a stretch that lands under the item's min cross size, which overflows
+/// the line on purpose -- min wins over max and over the line height, per the usual clamp order.
+TEST(MinMaxHypotheticalTests, row_stretch_cross_size_is_raised_by_min_height) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+    root->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+    root->GetStyle().Modify<Dimensions>().Height = CSSValue(56.0f);
+
+    auto raised = std::make_shared<Node>();
+    raised->SetDisplay(OuterDisplay::Flex);
+    raised->GetStyle().Modify<Dimensions>().Width = CSSValue(200.0f);
+    raised->GetStyle().Modify<Dimensions>().MinHeight = CSSValue(80.0f);
+    raised->GetStyle().Modify<CSSFlex>().AlignSelf = AlignItems::Stretch;
+    root->AddChild(raised);
+
+    root->Calculate(300.0f, 56.0f);
+
+    EXPECT_FLOAT_EQ(80.0f, raised->GetLayout().ComputedHeight);
+}
+
+/// Symmetric case: in a column container the cross axis is horizontal, so a stretch is clamped by
+/// the item's max-WIDTH.
+TEST(MinMaxHypotheticalTests, column_stretch_cross_size_is_clamped_by_max_width) {
+    auto root = std::make_shared<Node>();
+    root->SetDisplay(OuterDisplay::Flex);
+    root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Column;
+    root->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+    root->GetStyle().Modify<Dimensions>().Height = CSSValue(200.0f);
+
+    auto capped = std::make_shared<Node>();
+    capped->SetDisplay(OuterDisplay::Flex);
+    capped->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+    capped->GetStyle().Modify<Dimensions>().MaxWidth = CSSValue(120.0f);
+    capped->GetStyle().Modify<CSSFlex>().AlignSelf = AlignItems::Stretch;
+    root->AddChild(capped);
+
+    root->Calculate(300.0f, 200.0f);
+
+    EXPECT_FLOAT_EQ(120.0f, capped->GetLayout().ComputedWidth);
+    EXPECT_FLOAT_EQ(0.0f, capped->GetLayout().ComputedX);
+}

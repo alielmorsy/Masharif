@@ -14,7 +14,9 @@ Complete support for Flexbox properties:
   - `flex-direction`: `row`, `row-reverse`, `column`, `column-reverse`
   - `flex-wrap`: `nowrap`, `wrap`, `wrap-reverse`
   - `justify-content`: `flex-start`, `flex-end`, `center`, `space-between`, `space-around`, `space-evenly`
-  - `align-items`: `flex-start`, `flex-end`, `center`, `stretch`
+شكرا لتعوانكم معانا   - `align-items`: `flex-start`, `flex-end`, `center`, `stretch`, `baseline` (row containers;
+    every box's baseline is synthesised from its bottom margin edge, since the engine measures no
+    text — a column container's cross axis has no such answer and falls back to `flex-start`)
   - `align-content`: `flex-start`, `flex-end`, `center`, `space-between`, `space-around`, `stretch`
   - `gap`: Row and Column gaps
 
