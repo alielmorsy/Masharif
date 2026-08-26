@@ -43,19 +43,20 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
     // Shrink the incoming available space to this container's own content box, mirroring
     // FlexLayoutStrategy::ShrinkAvailableToContentBox. Without this, block/flex children resolve their
     // AUTO width against the raw viewport instead of the container, overflowing a narrow container.
+    //
+    // A definite ComputedWidth/Height is the only precondition: ComputeDimensions has already run,
+    // and it resolves the AUTO cases too -- an AUTO width to "fill the containing block, less this
+    // box's own margins", an inset-filled AUTO height to the top..bottom gap. An AUTO height that
+    // is still content-sized leaves ComputedHeight NaN at this point (ApplyBlockAutoHeight runs
+    // only after the strategy returns), which is exactly what the NaN test skips.
     float availW = availableWidth;
     float availH = availableHeight;
-    {
-        const auto &dim = containerStyle.GetDimensions();
-        const bool widthExplicit = dim.Width.Unit == CSSUnit::Px || dim.Width.Unit == CSSUnit::Percent;
-        const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
-        if (widthExplicit && !std::isnan(container.GetLayout().ComputedWidth))
-            availW = std::max(0.0f, container.GetLayout().ComputedWidth
-                                    - container.PaddingBorderHorizontal());
-        if (heightExplicit && !std::isnan(container.GetLayout().ComputedHeight))
-            availH = std::max(0.0f, container.GetLayout().ComputedHeight
-                                    - container.PaddingBorderVertical());
-    }
+    if (!std::isnan(container.GetLayout().ComputedWidth))
+        availW = std::max(0.0f, container.GetLayout().ComputedWidth
+                                - container.PaddingBorderHorizontal());
+    if (!std::isnan(container.GetLayout().ComputedHeight))
+        availH = std::max(0.0f, container.GetLayout().ComputedHeight
+                                - container.PaddingBorderVertical());
 
     for (const auto &child: container.m_Children) {
         const auto &childStyle = child->GetStyle();

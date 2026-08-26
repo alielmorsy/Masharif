@@ -181,3 +181,84 @@ TEST(NormalFlowTests, inline_flex_child_still_shrink_wraps) {
 
     ASSERT_FLOAT_EQ(100.0f, row->GetLayout().ComputedWidth);
 }
+
+// An AUTO-width block resolves its own width from the space it was handed, so it is just as
+// definite as an explicit one by the time children are laid out: the space it passes down must be
+// its own content box, not the space it received. Mirrors the browser cross-check's
+// page_article_blockflow figure/pullquote nodes.
+TEST(NormalFlowTests, auto_width_container_shrinks_available_to_its_content_box) {
+    auto root = std::make_shared<Node>(OuterDisplay::Block);
+    root->GetStyle().Modify<Dimensions>().Width = 780.0f;
+
+    auto figure = std::make_shared<Node>(OuterDisplay::Block); // width stays auto -> fills 780
+    auto &figPad = figure->GetStyle().Modify<PaddingEdge>();
+    figPad.Left = CSSValue(12.0f);
+    figPad.Right = CSSValue(12.0f);
+    auto &figBorder = figure->GetStyle().Modify<BorderProperties>();
+    figBorder.WidthLeft = CSSValue(1.0f);
+    figBorder.WidthRight = CSSValue(1.0f);
+    root->AddChild(figure);
+
+    auto img = std::make_shared<Node>(OuterDisplay::Block);
+    img->GetStyle().Modify<Dimensions>().Height = 60.0f;
+    figure->AddChild(img);
+
+    root->Calculate(1000.0f, 1000.0f);
+
+    ASSERT_FLOAT_EQ(780.0f, figure->GetLayout().ComputedWidth); // border box fills the root
+    ASSERT_FLOAT_EQ(754.0f, img->GetLayout().ComputedWidth);    // 780 - 12 - 12 - 1 - 1
+    ASSERT_FLOAT_EQ(13.0f, img->GetLayout().ComputedX);         // padding + border inset
+}
+
+TEST(NormalFlowTests, auto_width_container_with_margins_shrinks_children_to_content_box) {
+    auto root = std::make_shared<Node>(OuterDisplay::Block);
+    root->GetStyle().Modify<Dimensions>().Width = 780.0f;
+
+    auto pullquote = std::make_shared<Node>(OuterDisplay::Block);
+    auto &pqMargin = pullquote->GetStyle().Modify<MarginEdge>();
+    pqMargin.Left = CSSValue(40.0f);
+    pqMargin.Right = CSSValue(40.0f);
+    pullquote->GetStyle().Modify<PaddingEdge>().Left = CSSValue(20.0f);
+    pullquote->GetStyle().Modify<BorderProperties>().WidthLeft = CSSValue(4.0f);
+    root->AddChild(pullquote);
+
+    auto line = std::make_shared<Node>(OuterDisplay::Block);
+    line->GetStyle().Modify<Dimensions>().Height = 20.0f;
+    pullquote->AddChild(line);
+
+    root->Calculate(1000.0f, 1000.0f);
+
+    ASSERT_FLOAT_EQ(700.0f, pullquote->GetLayout().ComputedWidth); // 780 less both margins
+    ASSERT_FLOAT_EQ(676.0f, line->GetLayout().ComputedWidth);      // 700 - 20 padding - 4 border
+    ASSERT_FLOAT_EQ(64.0f, line->GetLayout().ComputedX);           // 40 margin + 20 pad + 4 border
+}
+
+// Same rule on the block axis: `height: auto` with both insets set fills the gap, which makes the
+// height definite before the strategy runs, so a percentage-height child must resolve against this
+// box's content box rather than the gap it was handed.
+TEST(NormalFlowTests, inset_filled_auto_height_container_shrinks_available_height) {
+    auto root = std::make_shared<Node>(OuterDisplay::Block);
+    root->GetStyle().Modify<Dimensions>().Width = 400.0f;
+    root->GetStyle().Modify<Dimensions>().Height = 200.0f;
+    root->GetStyle().Modify<Dimensions>().Position = PositionType::Relative;
+
+    auto panel = std::make_shared<Node>(OuterDisplay::Block);
+    auto &panelDim = panel->GetStyle().Modify<Dimensions>();
+    panelDim.Position = PositionType::Absolute;
+    panelDim.Width = 100.0f; // isolate the height axis
+    panelDim.Top = CSSValue(0.0f);
+    panelDim.Bottom = CSSValue(0.0f); // height: auto + both insets -> fills the 200px gap
+    auto &panelPad = panel->GetStyle().Modify<PaddingEdge>();
+    panelPad.Top = CSSValue(10.0f);
+    panelPad.Bottom = CSSValue(10.0f);
+    root->AddChild(panel);
+
+    auto fill = std::make_shared<Node>(OuterDisplay::Block);
+    fill->GetStyle().Modify<Dimensions>().Height = CSSValue(100.0f, CSSUnit::Percent);
+    panel->AddChild(fill);
+
+    root->Calculate(1000.0f, 1000.0f);
+
+    ASSERT_FLOAT_EQ(200.0f, panel->GetLayout().ComputedHeight); // border box spans the gap
+    ASSERT_FLOAT_EQ(180.0f, fill->GetLayout().ComputedHeight);  // 200 less both paddings
+}
