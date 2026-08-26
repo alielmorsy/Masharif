@@ -11,7 +11,12 @@ endif ()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # never silently downgrade to an older standard
+
+option(MASHARIF_BUILD_TESTS "Build Masharif tests" ON)
+
 add_subdirectory(masharifcore)
 add_subdirectory(example)
-add_subdirectory(tests)
+if (MASHARIF_BUILD_TESTS)
+    add_subdirectory(tests)
+endif ()
 add_subdirectory(tools/browser_layout_check)
