@@ -264,9 +264,16 @@ private:
                 if (!m_IsRow) m_CrossShrinkWrapped = true;
             }
             m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
-        } else if (m_IsRow && m_Style.GetDimensions().Width.Unit == CSSUnit::Auto
-                   && !m_Container.MainSizeIsDefinite()) {
-            m_Layout.ComputedWidth = m_TotalMainSize + pbRow;
+        } else if (m_IsRow && m_Style.GetDimensions().Width.Unit == CSSUnit::Auto) {
+            // AUTO main axis shrink-wraps to content -- UNLESS the parent already fixed this box's
+            // main size (a block-level box filling its containing block, or a definite-size
+            // distribution). Then keep the width already resolved for it and only re-derive the
+            // content box from it: the incoming available space is the PARENT's content box, so it
+            // still carries this box's own margins, padding and border.
+            if (!m_Container.MainSizeIsDefinite())
+                m_Layout.ComputedWidth = m_TotalMainSize + pbRow;
+            else if (std::isnan(m_Layout.ComputedWidth))
+                m_Layout.ComputedWidth = m_AvailableWidth;
             m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
         } else if (std::isnan(m_Layout.ComputedWidth)) {
             m_Layout.ComputedWidth = m_AvailableWidth;
@@ -487,15 +494,33 @@ private:
                                 const float padEnd, const float crossPos) {
         const std::size_t itemCount = LineItemCount(line);
 
-        float takenAfterResolve = 0;
-        for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i)
-            takenAfterResolve += m_Items[i]->GetLayout().ComputedFlexBasis;
-
-        const float remainingSpace = availableSpace - takenAfterResolve;
-
         float gap = m_IsRow
                         ? m_Style.GetFlex().Gaps.Column.ResolveValue(m_AvailableWidth)
                         : m_Style.GetFlex().Gaps.Row.ResolveValue(m_AvailableHeight);
+
+        // Everything the line has already spent on the main axis: the items' resolved main sizes,
+        // the (count-1) inter-item gaps, and the items' own non-auto main-axis margins. Gaps and
+        // margins occupy main-axis space exactly as the item boxes do, so none of it is free -- and
+        // free space is what BOTH auto margins (8.1, below) and justify-content divide up.
+        // Counting gaps/margins as free lands every justify-content value other than flex-start
+        // off by the total gap (or a fraction of it) and pushes the line past its container's end
+        // edge. ResolveFlexibleLengths already measures free space this way for grow/shrink.
+        //
+        // Measured AFTER flexible lengths resolved -- 9.7 runs before 8.1, so a grow item takes the
+        // free space first and an auto margin only gets what survives; measuring before would hand
+        // the same pixels out twice. `gap` is still the declared gap here: the distributive
+        // justify-content values fold their share into it further down, and that share IS this free
+        // space -- counting it twice would leave nothing for the auto margins to take.
+        // Percentage margins resolve against the container's WIDTH on every side, hence
+        // m_AvailableWidth even when the main axis is a column's.
+        float takenAfterResolve = itemCount > 1 ? gap * static_cast<float>(itemCount - 1) : 0.0f;
+        for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
+            takenAfterResolve += m_Items[i]->GetLayout().ComputedFlexBasis;
+            takenAfterResolve += NeededMainAxisMargin(m_IsRow, m_Items[i]->GetStyle().GetMargin(),
+                                                     m_AvailableWidth);
+        }
+
+        const float remainingSpace = availableSpace - takenAfterResolve;
 
         // CSS Flexbox 8.1: POSITIVE free space on the line is split equally between every auto
         // main-axis margin on it. line.NumberOfAutoMargin counts MARGINS, not the items carrying
@@ -503,23 +528,8 @@ private:
         // `margin: 0 auto` takes half on each side. Negative free space has nothing to give: the
         // auto margins resolve to 0 and the line overflows, rather than every auto margin taking a
         // share of the overflow and dragging the line backwards off its own container.
-        //
-        // Measured AFTER flexible lengths resolved -- 9.7 runs before 8.1, so a grow item takes the
-        // free space first and an auto margin only gets what survives; measuring before would hand
-        // the same pixels out twice. Gaps and the items' own non-auto margins are consumed by the
-        // line, so they are not free either. `gap` is still the declared gap here: the distributive
-        // justify-content values fold their share into it further down, and that share IS this free
-        // space -- counting it twice would leave nothing for the auto margins to take.
-        // Percentage margins resolve against the container's WIDTH on every side, hence
-        // m_AvailableWidth even when the main axis is a column's.
-        float autoMarginFree = availableSpace - takenAfterResolve
-                               - (itemCount > 1 ? gap * static_cast<float>(itemCount - 1) : 0.0f);
-        for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i)
-            autoMarginFree -= NeededMainAxisMargin(m_IsRow, m_Items[i]->GetStyle().GetMargin(),
-                                                   m_AvailableWidth);
-
-        const float autoMarginShare = line.NumberOfAutoMargin > 0 && autoMarginFree > 0.0f
-                                          ? autoMarginFree / static_cast<float>(line.NumberOfAutoMargin)
+        const float autoMarginShare = line.NumberOfAutoMargin > 0 && remainingSpace > 0.0f
+                                          ? remainingSpace / static_cast<float>(line.NumberOfAutoMargin)
                                           : 0.0f;
 
         const float mainStartPos = m_IsReverse ? (containerMainSize - padEnd) : padStart;

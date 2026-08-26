@@ -73,10 +73,25 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         auto &childLayout = child->GetLayout();
         const auto &childMargin = childStyle.GetMargin();
         const auto &childPadding = childStyle.GetPadding();
-
-        child->LayoutImpl(ctx, availW, availH);
-
         const auto display = childStyle.GetDimensions().Display;
+
+        // A block-level box with `width: auto` FILLS its containing block; shrink-to-fit belongs to
+        // floats, inline-level boxes and out-of-flow boxes. FlexLayoutStrategy gates its AUTO-main-axis
+        // shrink-wrap on MainSizeIsDefinite(), so a block-level flex child needs that flag set or it
+        // collapses to its content width and takes its whole subtree with it (grow items resolving
+        // against a 0-wide container). Conditions, all necessary:
+        //   - Flex only. A Block child routes back here, which never reads the flag; InlineFlex is
+        //     inline-level, where shrink-to-fit IS correct.
+        //   - Row main axis only. The flag means "the child's MAIN axis is definite", and only the
+        //     inline axis fills — a column container's AUTO height must still be content-sized.
+        //   - Definite available width. There is nothing to fill otherwise.
+        const bool fillsInlineAxis = display == OuterDisplay::Flex
+                                     && childStyle.GetFlex().IsRow()
+                                     && !std::isnan(availW);
+        if (fillsInlineAxis) child->m_mainSizeDefinite = true;
+        child->LayoutImpl(ctx, availW, availH);
+        if (fillsInlineAxis) child->m_mainSizeDefinite = false;
+
         if (display == OuterDisplay::Block || display == OuterDisplay::Flex) {
             if (!line.Empty()) {
                 LayoutLine(line, currentY);
