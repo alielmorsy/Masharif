@@ -35,7 +35,10 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
 
     const auto &containerStyle = container.GetStyle();
     const auto &containerBorder = containerStyle.GetBorder();
-    const auto &containerPadding = containerStyle.GetPadding();
+    // Percentage paddings resolve against the container's own containing block, never against
+    // anything derived here -- Node::PaddingLeft and friends hold that reference.
+    const float containerPadLeft = container.PaddingLeft();
+    const float containerPadTop = container.PaddingTop();
 
     // Shrink the incoming available space to this container's own content box, mirroring
     // FlexLayoutStrategy::ShrinkAvailableToContentBox. Without this, block/flex children resolve their
@@ -48,12 +51,10 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
         if (widthExplicit && !std::isnan(container.GetLayout().ComputedWidth))
             availW = std::max(0.0f, container.GetLayout().ComputedWidth
-                                    - containerPadding.Left.Value - containerPadding.Right.Value
-                                    - containerBorder.WidthLeft.Value - containerBorder.WidthRight.Value);
+                                    - container.PaddingBorderHorizontal());
         if (heightExplicit && !std::isnan(container.GetLayout().ComputedHeight))
             availH = std::max(0.0f, container.GetLayout().ComputedHeight
-                                    - containerPadding.Top.Value - containerPadding.Bottom.Value
-                                    - containerBorder.WidthTop.Value - containerBorder.WidthBottom.Value);
+                                    - container.PaddingBorderVertical());
     }
 
     for (const auto &child: container.m_Children) {
@@ -72,8 +73,11 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
         }
         auto &childLayout = child->GetLayout();
         const auto &childMargin = childStyle.GetMargin();
-        const auto &childPadding = childStyle.GetPadding();
         const auto display = childStyle.GetDimensions().Display;
+
+        // availW is this container's content box, which is exactly the containing block every
+        // percentage padding and margin on the child resolves against.
+        child->SetPercentBasis(availW);
 
         // A block-level box with `width: auto` FILLS its containing block; shrink-to-fit belongs to
         // floats, inline-level boxes and out-of-flow boxes. FlexLayoutStrategy gates its AUTO-main-axis
@@ -104,9 +108,9 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
             // ComputeDimensions already shrank an AUTO-width child by both its margins; without
             // adding margin-left here that reserved space silently shifts to the right edge
             // instead of padding the left one.
-            childLayout.LocalX = containerPadding.Left.Value + containerBorder.WidthLeft.Value
+            childLayout.LocalX = containerPadLeft + containerBorder.WidthLeft.Value
                                   + childMargin.Left.Value;
-            childLayout.LocalY = currentY + containerPadding.Top.Value + containerBorder.WidthTop.Value;
+            childLayout.LocalY = currentY + containerPadTop + containerBorder.WidthTop.Value;
             currentY += childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value;
         } else if (display == OuterDisplay::InlineBlock || display == OuterDisplay::InlineFlex) {
             const float childWidth = childLayout.ComputedWidth + childMargin.Left.Value + childMargin.Right.Value;
@@ -118,13 +122,11 @@ void NormalFlowStrategy::Layout(Node &container, LayoutContext &ctx,
                 currentX = 0.0f;
                 lineHeight = 0.0f;
             }
-            const auto &childBorder = childStyle.GetBorder();
             line.Append(child.get());
             currentX += childWidth;
             lineHeight = std::max(lineHeight,
                                   childLayout.ComputedHeight + childMargin.Top.Value + childMargin.Bottom.Value +
-                                  childPadding.Top.Value + childPadding.Bottom.Value +
-                                  childBorder.WidthTop.Value + childBorder.WidthBottom.Value);
+                                  child->PaddingBorderVertical());
         }
     }
 

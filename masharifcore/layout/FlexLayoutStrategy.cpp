@@ -55,22 +55,22 @@ public:
         // crossPos is the container's own content-box origin along the cross axis: padding AND
         // border inset it, same as the absolute-positioning containing-block origin does.
         float crossPos = m_IsRow
-                             ? m_Style.GetPadding().Top.ResolveValue(m_AvailableWidth) + border.WidthTop.Value
-                             : m_Style.GetPadding().Left.ResolveValue(m_AvailableWidth) + border.WidthLeft.Value;
+                             ? m_Container.PaddingTop() + border.WidthTop.Value
+                             : m_Container.PaddingLeft() + border.WidthLeft.Value;
 
         // Invariant across the line loop: the container's main size and paddings do not
         // change while lines are built and placed.
         const float containerMainSize = m_IsRow ? m_Layout.ComputedWidth : m_Layout.ComputedHeight;
-        const auto &padding = m_Style.GetPadding();
-        // Percentage padding always resolves against the container's WIDTH (CSS rule, all four
-        // sides) -- not `containerMainSize`, which is the container's HEIGHT for a column. Border
-        // is added alongside padding: both inset the content-box origin from the border-box edge.
+        // A percentage padding resolves against the CONTAINING BLOCK's width on all four sides --
+        // neither `containerMainSize` (this container's HEIGHT for a column) nor this box's own
+        // width. Node::PaddingLeft and friends hold that reference. Border is added alongside
+        // padding: both inset the content-box origin from the border-box edge.
         const float padStart = m_IsRow
-                                   ? padding.Left.ResolveValue(m_Layout.ComputedWidth) + border.WidthLeft.Value
-                                   : padding.Top.ResolveValue(m_Layout.ComputedWidth) + border.WidthTop.Value;
+                                   ? m_Container.PaddingLeft() + border.WidthLeft.Value
+                                   : m_Container.PaddingTop() + border.WidthTop.Value;
         const float padEnd = m_IsRow
-                                 ? padding.Right.ResolveValue(m_Layout.ComputedWidth) + border.WidthRight.Value
-                                 : padding.Bottom.ResolveValue(m_Layout.ComputedWidth) + border.WidthBottom.Value;
+                                 ? m_Container.PaddingRight() + border.WidthRight.Value
+                                 : m_Container.PaddingBottom() + border.WidthBottom.Value;
         const float availableSpace = containerMainSize - padStart - padEnd;
 
         while (m_NextItem < m_Items.Count()) {
@@ -127,20 +127,14 @@ private:
     /// Shrink available space to the container's content box when the container has an
     /// explicit size, so 100%-sized children of a padded container don't overflow.
     void ShrinkAvailableToContentBox() {
-        const auto &pad = m_Style.GetPadding();
-        const auto &bor = m_Style.GetBorder();
         const auto &dim = m_Style.GetDimensions();
         const bool widthExplicit = dim.Width.Unit == CSSUnit::Px || dim.Width.Unit == CSSUnit::Percent;
         const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
         if (widthExplicit && !std::isnan(m_Layout.ComputedWidth)) {
-            m_AvailableWidth = m_Layout.ComputedWidth
-                               - pad.Left.Value - pad.Right.Value
-                               - bor.WidthLeft.Value - bor.WidthRight.Value;
+            m_AvailableWidth = m_Layout.ComputedWidth - m_Container.PaddingBorderHorizontal();
         }
         if (heightExplicit && !std::isnan(m_Layout.ComputedHeight)) {
-            m_AvailableHeight = m_Layout.ComputedHeight
-                                - pad.Top.Value - pad.Bottom.Value
-                                - bor.WidthTop.Value - bor.WidthBottom.Value;
+            m_AvailableHeight = m_Layout.ComputedHeight - m_Container.PaddingBorderVertical();
         }
     }
 
@@ -190,6 +184,11 @@ private:
         for (std::size_t i = 0; i < count; ++i) {
             Node *child = m_Items[i]; // copy out: the recursive solve below may grow the arena
 
+            // The item's containing block is THIS container's content box. Handed over before the
+            // solve, because the AUTO-main branch just below deliberately measures at NaN width and
+            // a percentage padding must not resolve against that (nor against the item's own size).
+            child->SetPercentBasis(m_AvailableWidth);
+
             float childAvailW = m_AvailableWidth;
             float childAvailH = m_AvailableHeight;
             const auto &dim = child->GetStyle().GetDimensions();
@@ -208,11 +207,8 @@ private:
                 const float resolved = m_IsRow ? childLayout.ComputedWidth : childLayout.ComputedHeight;
                 childLayout.ComputedFlexBasis = std::isnan(resolved) ? 0.0f : resolved;
             } else {
-                const auto &pad = childStyle.GetPadding();
-                const auto &[wTop, wBottom, wLeft, wRight] = childStyle.GetBorder();
-                const float pb = m_IsRow
-                                     ? pad.Left.Value + pad.Right.Value + wLeft.Value + wRight.Value
-                                     : pad.Top.Value + pad.Bottom.Value + wTop.Value + wBottom.Value;
+                const float pb = m_IsRow ? child->PaddingBorderHorizontal()
+                                         : child->PaddingBorderVertical();
                 childLayout.ComputedFlexBasis = childStyle.GetFlex().FlexBasis.ResolveValue(basisRef) + pb;
             }
 
@@ -250,13 +246,15 @@ private:
         }
     }
 
-    /// Resolve NaN available space and shrink-wrap an AUTO main axis to content
-    /// (unless the parent has already fixed this node's size — MainSizeIsDefinite).
+    /// Resolve NaN available space and size both axes that are still AUTO from content: the main
+    /// axis to the items' total (unless the parent has already fixed it — MainSizeIsDefinite), the
+    /// cross axis to the tallest/widest item (unless the parent has already stretched it —
+    /// CrossSizeIsDefinite). Neither AUTO axis fills the space it was offered: on the main axis
+    /// that is shrink-to-fit, on the cross axis it is Flexbox 9.4's hypothetical cross size, which
+    /// only the parent's `align-self: stretch` may afterwards expand.
     void ResolveContainerSize() {
-        const auto &p = m_Style.GetPadding();
-        const auto &b = m_Style.GetBorder();
-        const float pbRow = p.Left.Value + p.Right.Value + b.WidthLeft.Value + b.WidthRight.Value;
-        const float pbCol = p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value;
+        const float pbRow = m_Container.PaddingBorderHorizontal();
+        const float pbCol = m_Container.PaddingBorderVertical();
 
         if (std::isnan(m_AvailableWidth)) {
             if (m_Style.GetDimensions().Width.Unit == CSSUnit::Auto) {
@@ -275,6 +273,16 @@ private:
             else if (std::isnan(m_Layout.ComputedWidth))
                 m_Layout.ComputedWidth = m_AvailableWidth;
             m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
+        } else if (!m_IsRow && m_Style.GetDimensions().Width.Unit == CSSUnit::Auto
+                   && m_Container.IsFlexItem() && !m_Container.CrossSizeIsDefinite()) {
+            // The column's AUTO cross size, mirroring the height branch below: content-sized here,
+            // widened to the line only by the parent's `align-self: stretch`. ComputeDimensions has
+            // already filled ComputedWidth with the whole available extent by this point, because
+            // that IS the rule for a block-level box -- hence the IsFlexItem() guard, without which
+            // this would re-collapse every normal-flow flex container (see gh#3).
+            m_Layout.ComputedWidth = m_MaxCrossSize + pbRow;
+            m_CrossShrinkWrapped = true;
+            m_AvailableWidth = m_Layout.ComputedWidth - pbRow;
         } else if (std::isnan(m_Layout.ComputedWidth)) {
             m_Layout.ComputedWidth = m_AvailableWidth;
         }
@@ -288,6 +296,18 @@ private:
         } else if (!m_IsRow && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto
                    && !m_Container.MainSizeIsDefinite()) {
             m_Layout.ComputedHeight = m_TotalMainSize + pbCol;
+            m_AvailableHeight = m_Layout.ComputedHeight - pbCol;
+        } else if (m_IsRow && m_Style.GetDimensions().Height.Unit == CSSUnit::Auto
+                   && !m_Container.CrossSizeIsDefinite()) {
+            // AUTO cross size is CONTENT-based (Flexbox 9.4: the hypothetical cross size). Expanding
+            // it to the line is `align-self: stretch`, and that is the PARENT's job -- its
+            // AlignLinesOnCrossAxis stretches the item and then re-solves it through
+            // LayoutContentsWithDefiniteSize, which is the CrossSizeIsDefinite case excluded here.
+            // Filling the available cross extent at this point pre-empts that decision: the box
+            // takes the whole line whatever the parent's align-items says, so it is both the wrong
+            // size and left with a zero-length gap for center/flex-end to move it inside.
+            m_Layout.ComputedHeight = m_MaxCrossSize + pbCol;
+            m_CrossShrinkWrapped = true;
             m_AvailableHeight = m_Layout.ComputedHeight - pbCol;
         } else if (std::isnan(m_Layout.ComputedHeight)) {
             m_Layout.ComputedHeight = m_AvailableHeight;
@@ -703,15 +723,11 @@ private:
         }
         m_MaxCrossSize = maxCross;
 
-        const auto &p = m_Style.GetPadding();
-        const auto &b = m_Style.GetBorder();
         if (m_IsRow) {
-            const float pb = p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value;
-            m_Layout.ComputedHeight = m_MaxCrossSize + pb;
+            m_Layout.ComputedHeight = m_MaxCrossSize + m_Container.PaddingBorderVertical();
             m_AvailableHeight = m_MaxCrossSize;
         } else {
-            const float pb = p.Left.Value + p.Right.Value + b.WidthLeft.Value + b.WidthRight.Value;
-            m_Layout.ComputedWidth = m_MaxCrossSize + pb;
+            m_Layout.ComputedWidth = m_MaxCrossSize + m_Container.PaddingBorderHorizontal();
             m_AvailableWidth = m_MaxCrossSize;
         }
     }
@@ -743,11 +759,8 @@ private:
         for (std::size_t li = 0; li < lineCount; ++li) total += m_Lines[li].CrossSize;
         total += static_cast<float>(lineCount - 1) * LineGap();
 
-        const auto &p = m_Style.GetPadding();
-        const auto &b = m_Style.GetBorder();
-        const float pb = m_IsRow
-                             ? p.Top.Value + p.Bottom.Value + b.WidthTop.Value + b.WidthBottom.Value
-                             : p.Left.Value + p.Right.Value + b.WidthLeft.Value + b.WidthRight.Value;
+        const float pb = m_IsRow ? m_Container.PaddingBorderVertical()
+                                 : m_Container.PaddingBorderHorizontal();
 
         // Through the same clamp every other cross size goes through, so min-height still floors the
         // result and max-height still caps it -- a capped container overflows, which is what a stated
@@ -770,20 +783,20 @@ private:
         if (lineCount == 0) return;
 
         const float containerCrossSize = m_IsRow ? m_Layout.ComputedHeight : m_Layout.ComputedWidth;
-        const float width = m_Layout.ComputedWidth;
 
         // This function is the authoritative writer of every item's cross position (it runs after,
         // and overwrites, the `crossPos` the line loop handed to PositionLineOnMainAxis), so the
         // border term belongs here too: paddingStart is the container's content-box origin on the
-        // cross axis, and border insets it exactly like padding does. Percentage padding resolves
-        // against `width` on all four sides -- the CSS rule -- which is already the case here.
+        // cross axis, and border insets it exactly like padding does. A percentage padding resolves
+        // against the CONTAINING BLOCK's width on all four sides -- which is what Node::PaddingTop
+        // and friends use, and is NOT this container's own ComputedWidth.
         const auto &border = m_Style.GetBorder();
         const float paddingStart = m_IsRow
-                                       ? m_Style.GetPadding().Top.ResolveValue(width) + border.WidthTop.Value
-                                       : m_Style.GetPadding().Left.ResolveValue(width) + border.WidthLeft.Value;
+                                       ? m_Container.PaddingTop() + border.WidthTop.Value
+                                       : m_Container.PaddingLeft() + border.WidthLeft.Value;
         const float paddingEnd = m_IsRow
-                                     ? m_Style.GetPadding().Bottom.ResolveValue(width) + border.WidthBottom.Value
-                                     : m_Style.GetPadding().Right.ResolveValue(width) + border.WidthRight.Value;
+                                     ? m_Container.PaddingBottom() + border.WidthBottom.Value
+                                     : m_Container.PaddingRight() + border.WidthRight.Value;
 
         // Gaps between lines are occupied space like the lines themselves: left out of this total,
         // align-content hands the gap's pixels out a second time as free space and the lines drift
@@ -955,6 +968,11 @@ private:
             for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
                 Node *child = m_Items[i];
                 const auto &childLayout = child->GetLayout();
+                // ResolveContainerSize may have moved this container's content box since the basis
+                // phase stated the item's percentage reference, and LayoutContentsWithDefiniteSize
+                // hands the item its OWN content width -- against which `10%` is a tenth of the
+                // wrong box. Re-state the containing block before the definite solve.
+                child->SetPercentBasis(m_AvailableWidth);
                 child->LayoutContentsWithDefiniteSize(m_Ctx, childLayout.ComputedWidth,
                                                       childLayout.ComputedHeight);
             }
