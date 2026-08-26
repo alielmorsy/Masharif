@@ -2745,6 +2745,186 @@
         v_root->Calculate(W, H);
     }
 
+    // Full page: auto margins against flex/justify/overflow, and margins on out-of-flow boxes
+    // Two bands: main-axis auto margins in four configurations the gallery page does not cover, and non-auto margins on absolutely positioned boxes anchored by a start inset, an end inset, and no inset at all.
+    void Fixture_page_margin_edge_cases(float &W, float &H) {
+        W = 1100.0f; H = 320.0f;
+        auto v_root = N("root", OuterDisplay::Flex);
+        v_root->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Column;
+        v_root->GetStyle().Modify<CSSFlex>().Align = AlignItems::FlexStart;
+        v_root->GetStyle().Modify<CSSFlex>().Gaps.Row = CSSValue(20.0f);
+        v_root->GetStyle().Modify<Dimensions>().Width = CSSValue(1100.0f);
+        v_root->GetStyle().Modify<Dimensions>().Height = CSSValue(320.0f);
+
+        auto v_band_flex = N("band_flex", OuterDisplay::Flex);
+        v_band_flex->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_band_flex->GetStyle().Modify<CSSFlex>().Gaps.Column = CSSValue(20.0f);
+        v_band_flex->GetStyle().Modify<Dimensions>().Height = CSSValue(60.0f);
+        v_band_flex->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_band_flex->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_root->AddChild(v_band_flex);
+
+        auto v_am_grow = N("am_grow", OuterDisplay::Flex);
+        v_am_grow->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_am_grow->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+        v_am_grow->GetStyle().Modify<Dimensions>().Height = CSSValue(60.0f);
+        v_am_grow->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_am_grow->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_flex->AddChild(v_am_grow);
+
+        auto v_am_grow_a = N("am_grow_a", OuterDisplay::Flex);
+        v_am_grow_a->GetStyle().Modify<Dimensions>().Width = CSSValue(30.0f);
+        v_am_grow_a->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_grow_a->GetStyle().Modify<CSSFlex>().FlexGrow = 1.0f;
+        v_am_grow->AddChild(v_am_grow_a);
+
+        auto v_am_grow_b = N("am_grow_b", OuterDisplay::Flex);
+        v_am_grow_b->GetStyle().Modify<Dimensions>().Width = CSSValue(70.0f);
+        v_am_grow_b->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_grow_b->GetStyle().Modify<MarginEdge>().Left = CSSValue();
+        v_am_grow->AddChild(v_am_grow_b);
+
+        auto v_am_justify = N("am_justify", OuterDisplay::Flex);
+        v_am_justify->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_am_justify->GetStyle().Modify<CSSFlex>().Justify = JustifyContent::FlexCenter;
+        v_am_justify->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+        v_am_justify->GetStyle().Modify<Dimensions>().Height = CSSValue(60.0f);
+        v_am_justify->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_am_justify->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_flex->AddChild(v_am_justify);
+
+        auto v_am_justify_a = N("am_justify_a", OuterDisplay::Flex);
+        v_am_justify_a->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f);
+        v_am_justify_a->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_justify_a->GetStyle().Modify<MarginEdge>().Left = CSSValue();
+        v_am_justify->AddChild(v_am_justify_a);
+
+        auto v_am_gm = N("am_gm", OuterDisplay::Flex);
+        v_am_gm->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_am_gm->GetStyle().Modify<CSSFlex>().Gaps.Column = CSSValue(20.0f);
+        v_am_gm->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+        v_am_gm->GetStyle().Modify<Dimensions>().Height = CSSValue(60.0f);
+        v_am_gm->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_am_gm->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_flex->AddChild(v_am_gm);
+
+        auto v_am_gm_a = N("am_gm_a", OuterDisplay::Flex);
+        v_am_gm_a->GetStyle().Modify<Dimensions>().Width = CSSValue(70.0f);
+        v_am_gm_a->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_gm_a->GetStyle().Modify<MarginEdge>().Right = CSSValue();
+        v_am_gm->AddChild(v_am_gm_a);
+
+        auto v_am_gm_b = N("am_gm_b", OuterDisplay::Flex);
+        v_am_gm_b->GetStyle().Modify<Dimensions>().Width = CSSValue(70.0f);
+        v_am_gm_b->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_gm_b->GetStyle().Modify<MarginEdge>().Left = CSSValue(10.0f);
+        v_am_gm->AddChild(v_am_gm_b);
+
+        auto v_am_of = N("am_of", OuterDisplay::Flex);
+        v_am_of->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_am_of->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f);
+        v_am_of->GetStyle().Modify<Dimensions>().Height = CSSValue(60.0f);
+        v_am_of->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_am_of->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_flex->AddChild(v_am_of);
+
+        auto v_am_of_a = N("am_of_a", OuterDisplay::Flex);
+        v_am_of_a->GetStyle().Modify<Dimensions>().Width = CSSValue(70.0f);
+        v_am_of_a->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_of_a->GetStyle().Modify<MarginEdge>().Right = CSSValue();
+        v_am_of_a->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_am_of->AddChild(v_am_of_a);
+
+        auto v_am_of_b = N("am_of_b", OuterDisplay::Flex);
+        v_am_of_b->GetStyle().Modify<Dimensions>().Width = CSSValue(70.0f);
+        v_am_of_b->GetStyle().Modify<Dimensions>().Height = CSSValue(40.0f);
+        v_am_of_b->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_am_of->AddChild(v_am_of_b);
+
+        auto v_band_abs = N("band_abs", OuterDisplay::Flex);
+        v_band_abs->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_band_abs->GetStyle().Modify<CSSFlex>().Gaps.Column = CSSValue(20.0f);
+        v_band_abs->GetStyle().Modify<Dimensions>().Height = CSSValue(200.0f);
+        v_band_abs->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_band_abs->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_root->AddChild(v_band_abs);
+
+        auto v_abm_inset = N("abm_inset", OuterDisplay::Flex);
+        v_abm_inset->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_abm_inset->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+        v_abm_inset->GetStyle().Modify<Dimensions>().Height = CSSValue(200.0f);
+        v_abm_inset->GetStyle().Modify<Dimensions>().Position = PositionType::Relative;
+        v_abm_inset->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_abm_inset->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_abs->AddChild(v_abm_inset);
+
+        auto v_abm_start = N("abm_start", OuterDisplay::Flex);
+        v_abm_start->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f);
+        v_abm_start->GetStyle().Modify<Dimensions>().Height = CSSValue(50.0f);
+        v_abm_start->GetStyle().Modify<MarginEdge>().Top = CSSValue(7.0f);
+        v_abm_start->GetStyle().Modify<MarginEdge>().Left = CSSValue(5.0f);
+        v_abm_start->GetStyle().Modify<Dimensions>().Position = PositionType::Absolute;
+        v_abm_start->GetStyle().Modify<Dimensions>().Top = CSSValue(20.0f);
+        v_abm_start->GetStyle().Modify<Dimensions>().Left = CSSValue(10.0f);
+        v_abm_inset->AddChild(v_abm_start);
+
+        auto v_abm_end = N("abm_end", OuterDisplay::Flex);
+        v_abm_end->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f);
+        v_abm_end->GetStyle().Modify<Dimensions>().Height = CSSValue(50.0f);
+        v_abm_end->GetStyle().Modify<MarginEdge>().Right = CSSValue(5.0f);
+        v_abm_end->GetStyle().Modify<MarginEdge>().Bottom = CSSValue(7.0f);
+        v_abm_end->GetStyle().Modify<Dimensions>().Position = PositionType::Absolute;
+        v_abm_end->GetStyle().Modify<Dimensions>().Right = CSSValue(10.0f);
+        v_abm_end->GetStyle().Modify<Dimensions>().Bottom = CSSValue(20.0f);
+        v_abm_inset->AddChild(v_abm_end);
+
+        auto v_abm_static = N("abm_static", OuterDisplay::Flex);
+        v_abm_static->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_abm_static->GetStyle().Modify<CSSFlex>().Justify = JustifyContent::FlexCenter;
+        v_abm_static->GetStyle().Modify<CSSFlex>().Align = AlignItems::FlexCenter;
+        v_abm_static->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+        v_abm_static->GetStyle().Modify<Dimensions>().Height = CSSValue(200.0f);
+        v_abm_static->GetStyle().Modify<Dimensions>().Position = PositionType::Relative;
+        v_abm_static->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_abm_static->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_abs->AddChild(v_abm_static);
+
+        auto v_abm_static_child = N("abm_static_child", OuterDisplay::Flex);
+        v_abm_static_child->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f);
+        v_abm_static_child->GetStyle().Modify<Dimensions>().Height = CSSValue(50.0f);
+        v_abm_static_child->GetStyle().Modify<MarginEdge>().Top = CSSValue(8.0f);
+        v_abm_static_child->GetStyle().Modify<MarginEdge>().Right = CSSValue(30.0f);
+        v_abm_static_child->GetStyle().Modify<MarginEdge>().Bottom = CSSValue(12.0f);
+        v_abm_static_child->GetStyle().Modify<MarginEdge>().Left = CSSValue(10.0f);
+        v_abm_static_child->GetStyle().Modify<Dimensions>().Position = PositionType::Absolute;
+        v_abm_static->AddChild(v_abm_static_child);
+
+        auto v_abm_single = N("abm_single", OuterDisplay::Flex);
+        v_abm_single->GetStyle().Modify<CSSFlex>().Direction = FlexDirection::Row;
+        v_abm_single->GetStyle().Modify<Dimensions>().Width = CSSValue(300.0f);
+        v_abm_single->GetStyle().Modify<Dimensions>().Height = CSSValue(200.0f);
+        v_abm_single->GetStyle().Modify<Dimensions>().Position = PositionType::Relative;
+        v_abm_single->GetStyle().Modify<CSSFlex>().FlexGrow = 0.0f;
+        v_abm_single->GetStyle().Modify<CSSFlex>().FlexShrink = 0.0f;
+        v_band_abs->AddChild(v_abm_single);
+
+        auto v_abm_single_child = N("abm_single_child", OuterDisplay::Flex);
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Width = CSSValue(100.0f);
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Height = CSSValue(50.0f);
+        v_abm_single_child->GetStyle().Modify<MarginEdge>().Top = CSSValue();
+        v_abm_single_child->GetStyle().Modify<MarginEdge>().Right = CSSValue(30.0f);
+        v_abm_single_child->GetStyle().Modify<MarginEdge>().Bottom = CSSValue();
+        v_abm_single_child->GetStyle().Modify<MarginEdge>().Left = CSSValue();
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Position = PositionType::Absolute;
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Top = CSSValue(0.0f);
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Right = CSSValue(20.0f);
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Bottom = CSSValue(0.0f);
+        v_abm_single_child->GetStyle().Modify<Dimensions>().Left = CSSValue(10.0f);
+        v_abm_single->AddChild(v_abm_single_child);
+
+        v_root->Calculate(W, H);
+    }
+
     // Full page: marketing landing (hero overlay / feature grid / logo wall / pricing / CTA / footer)
     void Fixture_page_marketing_landing(float &W, float &H) {
         W = 1200.0f; H = 1400.0f;

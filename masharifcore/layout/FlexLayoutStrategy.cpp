@@ -355,7 +355,6 @@ private:
         if (n == 0) return;
 
         const float remainingSpace = availableSpace - line.TakenSize;
-        if (line.NumberOfAutoMargin > 0) return;
 
         const bool isGrowing = remainingSpace > 0 && line.TotalFlexGrow > 0;
         const bool isShrinking = remainingSpace < 0 && line.TotalFlexShrinkScaledFactors != 0;
@@ -492,17 +491,44 @@ private:
         for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i)
             takenAfterResolve += m_Items[i]->GetLayout().ComputedFlexBasis;
 
-        const float originalRemainingSpace = availableSpace - line.TakenSize;
         const float remainingSpace = availableSpace - takenAfterResolve;
 
         float gap = m_IsRow
                         ? m_Style.GetFlex().Gaps.Column.ResolveValue(m_AvailableWidth)
                         : m_Style.GetFlex().Gaps.Row.ResolveValue(m_AvailableHeight);
 
+        // CSS Flexbox 8.1: POSITIVE free space on the line is split equally between every auto
+        // main-axis margin on it. line.NumberOfAutoMargin counts MARGINS, not the items carrying
+        // one, so a lone `margin-right: auto` takes the whole of the free space while a symmetric
+        // `margin: 0 auto` takes half on each side. Negative free space has nothing to give: the
+        // auto margins resolve to 0 and the line overflows, rather than every auto margin taking a
+        // share of the overflow and dragging the line backwards off its own container.
+        //
+        // Measured AFTER flexible lengths resolved -- 9.7 runs before 8.1, so a grow item takes the
+        // free space first and an auto margin only gets what survives; measuring before would hand
+        // the same pixels out twice. Gaps and the items' own non-auto margins are consumed by the
+        // line, so they are not free either. `gap` is still the declared gap here: the distributive
+        // justify-content values fold their share into it further down, and that share IS this free
+        // space -- counting it twice would leave nothing for the auto margins to take.
+        // Percentage margins resolve against the container's WIDTH on every side, hence
+        // m_AvailableWidth even when the main axis is a column's.
+        float autoMarginFree = availableSpace - takenAfterResolve
+                               - (itemCount > 1 ? gap * static_cast<float>(itemCount - 1) : 0.0f);
+        for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i)
+            autoMarginFree -= NeededMainAxisMargin(m_IsRow, m_Items[i]->GetStyle().GetMargin(),
+                                                   m_AvailableWidth);
+
+        const float autoMarginShare = line.NumberOfAutoMargin > 0 && autoMarginFree > 0.0f
+                                          ? autoMarginFree / static_cast<float>(line.NumberOfAutoMargin)
+                                          : 0.0f;
+
         const float mainStartPos = m_IsReverse ? (containerMainSize - padEnd) : padStart;
 
+        // Auto margins absorb ALL the positive free space before justify-content is consulted, so a
+        // line where they took any leaves justify-content nothing to distribute. Offsetting on top
+        // of margins that already spent those pixels pushed the line past the container's end edge.
         float mainOffset = 0;
-        switch (m_Style.GetFlex().Justify) {
+        if (autoMarginShare <= 0.0f) switch (m_Style.GetFlex().Justify) {
             case JustifyContent::FlexStart:
                 break;
             case JustifyContent::FlexEnd:
@@ -527,8 +553,6 @@ private:
                 break;
         }
 
-        int autoMarginItems = line.NumberOfAutoMargin;
-        float autoRemainingSpace = originalRemainingSpace;
         float currentPosition = mainStartPos + (m_IsReverse ? -mainOffset : mainOffset);
 
         for (std::size_t i = line.ItemBegin; i < line.ItemEnd; ++i) {
@@ -536,29 +560,25 @@ private:
             auto &childLayout = child->GetLayout();
             const auto &childStyle = child->GetStyle();
 
-            const bool hasAutoMargins =
-                    (m_IsRow && (childStyle.GetMargin().Left.Unit == CSSUnit::Auto ||
-                                 childStyle.GetMargin().Right.Unit == CSSUnit::Auto)) ||
-                    (!m_IsRow && (childStyle.GetMargin().Top.Unit == CSSUnit::Auto ||
-                                  childStyle.GetMargin().Bottom.Unit == CSSUnit::Auto));
-
-            float marginStart = 0, marginEnd = 0;
-            if (hasAutoMargins) {
-                const float itemSpace = autoMarginItems > 0 ? autoRemainingSpace / autoMarginItems : 0.0f;
-                marginStart = itemSpace;
-                marginEnd = itemSpace;
-                autoRemainingSpace -= itemSpace;
-                autoMarginItems--;
-            } else {
-                // Percentage margins always resolve against the container's WIDTH, including
-                // Top/Bottom in a column container -- never m_AvailableHeight.
-                marginStart = m_IsRow
-                                  ? childStyle.GetMargin().Left.ResolveValue(m_AvailableWidth)
-                                  : childStyle.GetMargin().Top.ResolveValue(m_AvailableWidth);
-                marginEnd = m_IsRow
-                                ? childStyle.GetMargin().Right.ResolveValue(m_AvailableWidth)
-                                : childStyle.GetMargin().Bottom.ResolveValue(m_AvailableWidth);
-            }
+            // A side takes the auto share ONLY if that side is the one declared `auto`; the other
+            // side keeps its resolved value. Writing the share into both sides regardless is what
+            // made `margin-right: auto` move the item itself forward by the whole free space
+            // instead of leaving it flush and pushing its siblings away from it.
+            //
+            // Percentage margins always resolve against the container's WIDTH, including
+            // Top/Bottom in a column container -- never m_AvailableHeight.
+            const CSSValue &mainStartEdge = m_IsRow
+                                                ? childStyle.GetMargin().Left
+                                                : childStyle.GetMargin().Top;
+            const CSSValue &mainEndEdge = m_IsRow
+                                              ? childStyle.GetMargin().Right
+                                              : childStyle.GetMargin().Bottom;
+            const float marginStart = mainStartEdge.Unit == CSSUnit::Auto
+                                          ? autoMarginShare
+                                          : mainStartEdge.ResolveValue(m_AvailableWidth);
+            const float marginEnd = mainEndEdge.Unit == CSSUnit::Auto
+                                        ? autoMarginShare
+                                        : mainEndEdge.ResolveValue(m_AvailableWidth);
 
             if (m_IsRow) {
                 childLayout.LocalY = crossPos;
@@ -855,7 +875,14 @@ private:
                     (m_IsRow
                          ? dimension.Height.Unit == CSSUnit::Auto
                          : dimension.Width.Unit == CSSUnit::Auto)) {
-                    const float stretchedSize = line.CrossSize - (marginStart + marginEnd);
+                    // Flexbox 9.4 step 11: the stretched cross size is clamped by the item's own
+                    // used min and max cross size. Nothing downstream re-applies them -- the item's
+                    // ComputeDimensions skips the clamp for an AUTO size, there being no number to
+                    // clamp yet -- so leaving it unclamped is how a max-height on a row's child (or a
+                    // max-width on a column's) gets parsed, resolved and then never honoured. Clamped
+                    // BEFORE the > 0 guard so a min-height still applies to a line that has no room.
+                    const float stretchedSize =
+                            ClampToCrossMinMax(child, line.CrossSize - (marginStart + marginEnd));
                     if (stretchedSize > 0) {
                         if (m_IsRow) childLayout.ComputedHeight = stretchedSize;
                         else childLayout.ComputedWidth = stretchedSize;

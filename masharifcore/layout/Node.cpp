@@ -92,6 +92,27 @@ namespace
     {
         return start.ResolveValue(reference) - end.ResolveValue(reference);
     }
+
+    /// One axis of the CSS 2.1 10.3.7 / 10.6.4 auto-margin resolution for an out-of-flow box:
+    /// the offset to add to the start inset. Auto margins only ever receive space when the axis is
+    /// OVER-CONSTRAINED -- both insets AND the size all non-auto -- because every other combination
+    /// has an auto value of its own to solve for and resolves the margins to zero instead.
+    /// `leftover` is what the containing block has left over after the two insets, the box's border
+    /// box, and any non-auto margin: both margins auto split it (the `margin: auto` centring idiom),
+    /// a lone auto margin takes all of it.
+    /// `ltrSplitFloor` marks the horizontal axis, where 10.3.7 refuses to split a NEGATIVE leftover
+    /// and instead zeroes margin-left (ltr) so margin-right absorbs it whole; 10.6.4 has no such
+    /// carve-out, so the vertical axis splits unconditionally.
+    float AutoMarginOffset(const CSSValue& startMargin, const CSSValue& endMargin,
+                           float leftover, bool ltrSplitFloor)
+    {
+        const bool autoStart = startMargin.Unit == CSSUnit::Auto;
+        const bool autoEnd = endMargin.Unit == CSSUnit::Auto;
+        if (autoStart && autoEnd)
+            return ltrSplitFloor && leftover < 0.0f ? 0.0f : leftover * 0.5f;
+        if (autoStart) return leftover;
+        return 0.0f; // only the end margin is auto (it absorbs the leftover), or neither is
+    }
 }
 
 void Node::RemoveChild(SharedNode& child)
@@ -702,17 +723,54 @@ void Node::PositionOutOfFlowChild(Node* ancestor, float refWidth, float refHeigh
     const bool hasTop = dimensions.Top.Unit != CSSUnit::Auto;
     const bool hasBottom = dimensions.Bottom.Unit != CSSUnit::Auto;
 
+    // CSS 2.1 10.3.7 / 10.6.4: both insets AND an explicit size on one axis over-constrain it, and
+    // whatever is left inside the inset box goes to that axis's `auto` margins -- the standard
+    // `margin: auto` centring idiom. Only auto margins are read here; a non-auto margin on an
+    // out-of-flow box still does not shift it, which is a separate gap.
+    // Percentage margins resolve against the containing block's WIDTH on all four sides, so
+    // refWidth is the reference even for the vertical pair.
+    const auto& margin = m_Style.GetMargin();
+    float autoMarginX = 0.0f, autoMarginY = 0.0f;
+    if (hasLeft && hasRight && dimensions.Width.Unit != CSSUnit::Auto)
+    {
+        autoMarginX = AutoMarginOffset(margin.Left, margin.Right,
+                                       refWidth
+                                       - dimensions.Left.ResolveValue(refWidth)
+                                       - dimensions.Right.ResolveValue(refWidth)
+                                       - margin.Left.ResolveValue(refWidth)
+                                       - margin.Right.ResolveValue(refWidth)
+                                       - m_Layout.ComputedWidth,
+                                       true);
+    }
+    if (hasTop && hasBottom && dimensions.Height.Unit != CSSUnit::Auto)
+    {
+        autoMarginY = AutoMarginOffset(margin.Top, margin.Bottom,
+                                       refHeight
+                                       - dimensions.Top.ResolveValue(refHeight)
+                                       - dimensions.Bottom.ResolveValue(refHeight)
+                                       - margin.Top.ResolveValue(refWidth)
+                                       - margin.Bottom.ResolveValue(refWidth)
+                                       - m_Layout.ComputedHeight,
+                                       false);
+    }
 
+    // The box's own margins are terms in the same constraint equation as the insets, so the margin
+    // on the anchoring side sits between that inset and the border box: `left: 10; margin-left: 5`
+    // puts the border box at 15, and an end-anchored box is pulled BACK from its end inset by its
+    // trailing margin. Auto margins resolve to 0 through ResolveValue, which is what leaves the
+    // over-constrained distribution above as their only source of space.
     if (hasLeft || hasRight)
     {
         if (hasLeft)
         {
-            m_Layout.ComputedX = cbX + dimensions.Left.ResolveValue(refWidth);
+            m_Layout.ComputedX = cbX + dimensions.Left.ResolveValue(refWidth)
+                + margin.Left.ResolveValue(refWidth) + autoMarginX;
         }
         else
         {
             m_Layout.ComputedX = cbX + refWidth
                 - dimensions.Right.ResolveValue(refWidth)
+                - margin.Right.ResolveValue(refWidth)
                 - m_Layout.ComputedWidth;
         }
     }
@@ -721,12 +779,14 @@ void Node::PositionOutOfFlowChild(Node* ancestor, float refWidth, float refHeigh
     {
         if (hasTop)
         {
-            m_Layout.ComputedY = cbY + dimensions.Top.ResolveValue(refHeight);
+            m_Layout.ComputedY = cbY + dimensions.Top.ResolveValue(refHeight)
+                + margin.Top.ResolveValue(refWidth) + autoMarginY;
         }
         else
         {
             m_Layout.ComputedY = cbY + refHeight
                 - dimensions.Bottom.ResolveValue(refHeight)
+                - margin.Bottom.ResolveValue(refWidth)
                 - m_Layout.ComputedHeight;
         }
     }
@@ -740,7 +800,18 @@ void Node::PositionOutOfFlowChild(Node* ancestor, float refWidth, float refHeigh
     const bool autoY = !hasTop && !hasBottom;
     if (autoX || autoY)
     {
-        float staticX = cbX, staticY = cbY;
+        // CSS defines the static position as where the box's MARGIN edge would have landed in flow,
+        // so the container's alignment distributes the margin box and the leading margin then insets
+        // the border box from it. Every inset on this axis is auto, so no auto margin can have been
+        // fed here (that needs an over-constrained axis) and ResolveValue maps them to 0.
+        const float marginLeft = margin.Left.ResolveValue(refWidth);
+        const float marginTop = margin.Top.ResolveValue(refWidth);
+        const float outerWidth = marginLeft + m_Layout.ComputedWidth
+            + margin.Right.ResolveValue(refWidth);
+        const float outerHeight = marginTop + m_Layout.ComputedHeight
+            + margin.Bottom.ResolveValue(refWidth);
+
+        float staticX = cbX + marginLeft, staticY = cbY + marginTop;
         if (ancestor && ancestor->m_Style.GetDimensions().Display == OuterDisplay::Flex)
         {
             const CSSFlex& flex = ancestor->m_Style.GetFlex();
@@ -748,21 +819,21 @@ void Node::PositionOutOfFlowChild(Node* ancestor, float refWidth, float refHeigh
             const auto& pad = ancestor->m_Style.GetPadding();
             const float contentW = std::max(0.0f, refWidth - bor.WidthLeft - bor.WidthRight - pad.Left - pad.Right);
             const float contentH = std::max(0.0f, refHeight - bor.WidthTop - bor.WidthBottom - pad.Top - pad.Bottom);
-            const float freeX = contentW - m_Layout.ComputedWidth;
-            const float freeY = contentH - m_Layout.ComputedHeight;
+            const float freeX = contentW - outerWidth;
+            const float freeY = contentH - outerHeight;
 
             const AlignItems self = m_Style.GetFlex().AlignSelf; // child's own align-self wins
             const AlignItems cross = self != AlignItems::AutoAlign ? self : flex.Align;
 
             if (flex.IsRow()) // main = X, cross = Y
             {
-                staticX = cbX + MainAxisStatic(flex.Justify, freeX);
-                staticY = cbY + CrossAxisStatic(cross, freeY);
+                staticX = cbX + marginLeft + MainAxisStatic(flex.Justify, freeX);
+                staticY = cbY + marginTop + CrossAxisStatic(cross, freeY);
             }
             else // main = Y, cross = X
             {
-                staticY = cbY + MainAxisStatic(flex.Justify, freeY);
-                staticX = cbX + CrossAxisStatic(cross, freeX);
+                staticY = cbY + marginTop + MainAxisStatic(flex.Justify, freeY);
+                staticX = cbX + marginLeft + CrossAxisStatic(cross, freeX);
             }
         }
 

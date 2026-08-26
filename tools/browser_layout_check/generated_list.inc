@@ -6,4 +6,5 @@
         {"gap_block_margin_top", Fixture_gap_block_margin_top},
         {"gap_inline_container_padding", Fixture_gap_inline_container_padding},
         {"gap_block_auto_height_padding", Fixture_gap_block_auto_height_padding},
+        {"page_margin_edge_cases", Fixture_page_margin_edge_cases},
         {"page_marketing_landing", Fixture_page_marketing_landing},
