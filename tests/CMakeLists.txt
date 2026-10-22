@@ -26,6 +26,7 @@ add_executable(tests
     NormalFlowTests.cpp
     MinMaxHypotheticalTests.cpp
     AbsolutePositionTests.cpp
+    DeepChainTests.cpp
 )
 
 target_link_libraries(tests  GTest::gtest_main masharif::masharifcore)

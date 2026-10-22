@@ -364,8 +364,9 @@ void Node::LayoutImpl(LayoutContext& ctx, float availableWidth, float availableH
     m_lastAvailW = availableWidth;
     m_lastAvailH = availableHeight;
 
-    if (m_Style.Dirty || !spaceSame)
-        ComputeDimensions(ctx, availableWidth, availableHeight, ignoreMinMax);
+    // Always, even when only a descendant changed: the strategies size the children's space from
+    // ComputedWidth/Height, which a parent's grow/stretch or definite pass has since overwritten.
+    ComputeDimensions(ctx, availableWidth, availableHeight, ignoreMinMax);
 
     LayoutStrategy::For(m_Style.GetDimensions().Display).Layout(*this, ctx, availableWidth, availableHeight);
     ++m_Layout.StrategyRuns;

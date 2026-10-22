@@ -160,17 +160,30 @@ private:
         }
     }
 
-    /// Shrink available space to the container's content box when the container has an
-    /// explicit size, so 100%-sized children of a padded container don't overflow.
+    /// Shrink available space to the container's content box, so 100%-sized children of a padded
+    /// container don't overflow. An AUTO axis with definite space shrinks too: the definite pass
+    /// (LayoutContentsWithDefiniteSize) already hands the strategy the content box, and if this
+    /// pass offered the raw extent instead, every descendant would be asked at sizes one padding
+    /// apart per ancestor, defeating the measure cache (exponential in depth for a padded chain).
     void ShrinkAvailableToContentBox() {
         const auto &dim = m_Style.GetDimensions();
+        const auto &margin = m_Style.GetMargin();
+        const float marginRef = m_AvailableWidth;
         const bool widthExplicit = dim.Width.Unit == CSSUnit::Px || dim.Width.Unit == CSSUnit::Percent;
         const bool heightExplicit = dim.Height.Unit == CSSUnit::Px || dim.Height.Unit == CSSUnit::Percent;
-        if (widthExplicit && !std::isnan(m_Layout.ComputedWidth)) {
+        if (!std::isnan(m_Layout.ComputedWidth) && (widthExplicit || !std::isnan(m_AvailableWidth))) {
             m_AvailableWidth = m_Layout.ComputedWidth - m_Container.PaddingBorderHorizontal();
+        } else if (!std::isnan(m_AvailableWidth)) {
+            m_AvailableWidth = std::max(0.0f, m_AvailableWidth - margin.Left.ResolveValue(marginRef)
+                                              - margin.Right.ResolveValue(marginRef)
+                                              - m_Container.PaddingBorderHorizontal());
         }
-        if (heightExplicit && !std::isnan(m_Layout.ComputedHeight)) {
+        if (!std::isnan(m_Layout.ComputedHeight) && (heightExplicit || !std::isnan(m_AvailableHeight))) {
             m_AvailableHeight = m_Layout.ComputedHeight - m_Container.PaddingBorderVertical();
+        } else if (!std::isnan(m_AvailableHeight)) {
+            m_AvailableHeight = std::max(0.0f, m_AvailableHeight - margin.Top.ResolveValue(marginRef)
+                                               - margin.Bottom.ResolveValue(marginRef)
+                                               - m_Container.PaddingBorderVertical());
         }
     }
 
